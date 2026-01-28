@@ -435,6 +435,20 @@ class WeChatPublisher:
                 else:
                     # 不存在错误码，说明请求成功
                     self.logger.info(f"{action}成功: {result}")
+                    
+                    # 如果是保存草稿模式，自动调用 freepublish/submit 发布文章
+                    if draft and result.get("media_id"):
+                        media_id = result["media_id"]
+                        self.logger.info(f"草稿保存成功，开始自动发布文章，media_id: {media_id}")
+                        
+                        try:
+                            publish_result = self._submit_publish(media_id)
+                            result["publish_result"] = publish_result
+                            self.logger.info(f"文章自动发布成功: {publish_result}")
+                        except Exception as publish_error:
+                            self.logger.error(f"自动发布失败（草稿已保存）: {publish_error}")
+                            result["publish_error"] = str(publish_error)
+                    
                     return result
             
             except requests.exceptions.RequestException as e:
@@ -447,6 +461,72 @@ class WeChatPublisher:
             self.logger.error(f"{action}过程中出错: {e}")
             raise
     
+    def _submit_publish(self, media_id):
+        """
+        提交发布文章（群发）
+        
+        使用 freepublish/submit 接口将草稿发布为正式文章
+        
+        Args:
+            media_id (str): 草稿的 media_id
+        
+        Returns:
+            dict: 发布结果，包含 publish_id
+        """
+        self.logger.info(f"开始提交发布，media_id: {media_id}")
+        
+        try:
+            # 确保有有效的 access_token
+            if not self.access_token:
+                self.get_access_token()
+            
+            url = f"https://api.weixin.qq.com/cgi-bin/freepublish/submit?access_token={self.access_token}"
+            
+            data = {
+                "media_id": media_id
+            }
+            
+            self.logger.info(f"发布请求体: {json.dumps(data, ensure_ascii=False)}")
+            
+            response = requests.post(
+                url,
+                data=json.dumps(data, ensure_ascii=False).encode('utf-8'),
+                headers={'Content-Type': 'application/json; charset=utf-8'},
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            self.logger.info(f"发布接口返回: {json.dumps(result, ensure_ascii=False)}")
+            
+            if "errcode" in result and result["errcode"] != 0:
+                errcode = result["errcode"]
+                errmsg = result.get("errmsg", "未知错误")
+                self.logger.error(f"发布失败 - 错误码: {errcode}, 错误信息: {errmsg}")
+                
+                # 特殊处理权限不足错误
+                if errcode == 48001:
+                    self.logger.warning("⚠️ 自动发布需要认证服务号权限，当前公众号类型不支持")
+                    self.logger.warning("⚠️ 草稿已保存成功，请登录微信公众平台手动发布")
+                    # 返回特殊结果，不抛出异常
+                    return {
+                        "errcode": errcode,
+                        "errmsg": errmsg,
+                        "hint": "自动发布需要认证服务号权限，请手动发布草稿"
+                    }
+                
+                raise Exception(f"发布失败: {result}")
+            
+            publish_id = result.get("publish_id")
+            if publish_id:
+                self.logger.info(f"文章发布任务提交成功，publish_id: {publish_id}")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"提交发布过程中出错: {e}")
+            raise
+
     def _resize_image(self, image_path, target_width=900, target_height=383):
         """
         调整图片大小以符合微信公众号要求

@@ -50,35 +50,35 @@ def wait_for_schedule(target_time_str):
     try:
         now = datetime.datetime.now()
         target_time = datetime.datetime.strptime(target_time_str, "%H:%M").time()
-        
+
         target_datetime = datetime.datetime.combine(now.date(), target_time)
-        
+
         # 如果目标时间已过，推迟到明天
         if now.time() > target_time:
             target_datetime += datetime.timedelta(days=1)
-            
+
         wait_seconds = (target_datetime - now).total_seconds()
-        
+
         logger.info(f"⏰ 已开启定时发布，将在 {target_datetime.strftime('%Y-%m-%d %H:%M:%S')} 发布")
         logger.info(f"⏳ 需等待约 {int(wait_seconds / 60)} 分钟...")
-        
+
         # 倒计时循环
         while wait_seconds > 0:
             # 每一小时或更短时间打印一次状态
-            sleep_interval = min(wait_seconds, 60) # 每分钟检查一次
+            sleep_interval = min(wait_seconds, 60)  # 每分钟检查一次
             time.sleep(sleep_interval)
-            
+
             # 重新计算剩余时间
             now = datetime.datetime.now()
             wait_seconds = (target_datetime - now).total_seconds()
-            
+
             if wait_seconds > 60:
-                 # 只有剩余超过1分钟才打印，避免刷屏
-                 pass
-                 
+                # 只有剩余超过1分钟才打印，避免刷屏
+                pass
+
         logger.info("⚡ 时间到！开始发布...")
         return True
-        
+
     except ValueError:
         logger.error("❌ 时间格式错误，请使用 HH:MM 格式 (例如 20:00)")
         return False
@@ -87,13 +87,13 @@ def wait_for_schedule(target_time_str):
 def main():
     config = Config()
     notifier = BarkNotifier()
-    
+
     parser = argparse.ArgumentParser(description="AI 情感文案生成器")
     parser.add_argument("text", nargs="?", help="输入主题、草稿或描述 (如果不填且使用 -r，则随机生成)")
     parser.add_argument("-p", "--publish", action="store_true", help="直接发布到微信公众号草稿箱")
     parser.add_argument("-t", "--time", help="定时发布时间 (HH:MM)，例如 20:00")
     parser.add_argument("-r", "--random", action="store_true", help="随机生成一个情感/成长类主题")
-    
+
     args = parser.parse_args()
 
     # 预设的随机主题库
@@ -106,11 +106,11 @@ def main():
     ]
 
     selected_topic = args.text
-    
+
     if args.random:
         selected_topic = random.choice(random_topics)
         logger.info(f"🎲 已随机选择主题: 【{selected_topic}】")
-    
+
     if not selected_topic:
         # 如果既没填文字，也没加 -r，提示错误
         logger.error("错误: 请输入文本内容，或使用 -r 参数随机生成")
@@ -134,11 +134,11 @@ def main():
         if args.publish:
             # 检查是否有定时设置
             publish_time = args.time
-            
+
             # 如果命令行没指定，检查配置文件的默认设置
             if not publish_time and config.PUBLISH_CONFIG.get("enable_schedule"):
                 publish_time = config.PUBLISH_CONFIG.get("target_time")
-                
+
             if publish_time:
                 # 进入定时等待模式
                 if not wait_for_schedule(publish_time):
@@ -189,12 +189,13 @@ def main():
                 logger.error(f"❌ 发布过程中出错: {e}")
                 notifier.send(title="公众号发布异常", content=f"错误信息: {str(e)}")
         else:
-             # 仅生成不发布，也发个通知知会一声
-             notifier.send(title="文案生成完成", content=f"标题: {result.get('title')}\n(未执行发布操作)")
-             
+            # 仅生成不发布，也发个通知知会一声
+            notifier.send(title="文案生成完成", content=f"标题: {result.get('title')}\n(未执行发布操作)")
+
     else:
         logger.error("❌ 生成失败，请查看日志。")
         notifier.send(title="文案生成失败", content="请检查日志文件")
+
 
 if __name__ == "__main__":
     main()
