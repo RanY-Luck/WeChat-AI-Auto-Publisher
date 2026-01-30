@@ -37,14 +37,8 @@ DASHSCOPE_MODEL = "qwen-plus"      # 模型选择 (推荐 qwen-plus)
 # 微信公众号配置
 WECHAT_CONFIG = {
     "app_id": "wx********",        # 您的公众号 AppID
-    "app_secret": "xxxxxxxx"       # 您的公众号 AppSecret
-}
-
-# 发布配置
-PUBLISH_CONFIG = {
-    "enable_schedule": True,       # 是否启用定时发布功能
-    "target_time": "20:00",        # 默认自动发布时间
-    "timezone": 8
+    "app_secret": "xxxxxxxx",       # 您的公众号 AppSecret
+    "proxy_url": "http://YOUR_VPS_IP:8080"  # docker部署到公网服务器需要填写
 }
 ```
 
@@ -95,23 +89,58 @@ python generate_promo.py -r -p
 # 后台挂起运行
 nohup python scheduler_app.py > logs/scheduler.out 2>&1 &
 ```
-
 ### 2. Docker 部署 (推荐)
+```bash
+把deploy_proxy.sh拖到服务器目录
+# 运行脚本
+chmod +x deploy_proxy.sh
+bash deploy_proxy.sh
+# 4. 脚本会自动显示你的服务器IP，记下来
+```
+
+### 2.1 Docker 部署 (推荐)
 
 **构建镜像：**
 ```bash
-docker build -t wechat-ai-publisher .
+# 构建
+docker build -t wechat-ai-publisher:latest .
+# 导出
+docker save -o wechat-ai-publisher.tar wechat-ai-publisher:latest
+# 导入
+docker load -i wechat-ai-publisher.tar
 ```
 
 **启动容器 (后台运行)：**
 ```bash
 docker run -d \
   --name wechat-publisher \
-  -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/config:/app/config \
-  wechat-ai-publisher
+  --restart always \
+  -v /root/wechat-publisher/logs:/app/logs \
+  wechat-ai-publisher:latest
 ```
+
+**检查挂载是否生效：**
+```bash
+# 进入容器检查
+docker exec -it wechat-publisher bash
+
+# 在容器内检查
+ls -la /app/config/
+cat /app/config/config.py
+
+# 检查Python能否导入
+python3 -c "from config.config import DASHSCOPE_API_KEY; print('OK')"
+
+# 退出容器
+exit
+```
+
 *注：挂载 `logs` 目录是为了查看日志，挂载 `config` 是为了方便随时修改配置且重启生效。*
+
+注：复制服务器的公网IP，添加到微信公众平台白名单 
+登录 https://mp.weixin.qq.com
+开发 -> 基本配置 -> IP白名单
+添加你服务器的IP
 
 ## ❓ 常见问题
 
