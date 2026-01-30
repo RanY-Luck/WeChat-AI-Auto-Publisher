@@ -52,3 +52,4 @@ Thumbs.db
 # 处理记录
 /temp
 config/config.py
+*.tar
