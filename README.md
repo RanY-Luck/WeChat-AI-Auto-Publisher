@@ -89,17 +89,8 @@ python generate_promo.py -r -p
 # 后台挂起运行
 nohup python scheduler_app.py > logs/scheduler.out 2>&1 &
 ```
-### 2. Docker 部署 (推荐)
-```bash
-2.1 把deploy_proxy.sh拖到服务器目录
-2.2 wget https://raw.githubusercontent.com/RanY-Luck/WeChat-AI-Auto-Publisher/refs/heads/main/deploy_proxy.sh deploy_proxy.sh
-# 运行脚本
-chmod +x deploy_proxy.sh
-bash deploy_proxy.sh
-# 4. 脚本会自动显示你的服务器IP，记下来
-```
 
-### 2.1 Docker 部署 (推荐)
+### 2 Docker 部署 (推荐)
 
 **构建镜像：**
 ```bash

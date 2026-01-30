@@ -10,7 +10,6 @@ BARK_KEY = ""
 WECHAT_CONFIG = {
     "app_id": "",  # 微信公众号AppID
     "app_secret": "",  # 微信公众号AppSecret
-    "proxy_url": "http://YOUR_VPS_IP:8080"
 }
 
 # 发布配置
