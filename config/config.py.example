@@ -1,3 +1,6 @@
+# 导入必要的模块
+import os
+
 # 获取方式: https://bailian.console.aliyun.com/
 # 阿里云百炼 (DashScope) 配置
 DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxx" # 请替换为您的真实 Key
@@ -114,7 +117,3 @@ class Config:
         for directory in directories:
             if not os.path.exists(directory):
                 os.makedirs(directory)
-
-
-# 导入必要的模块
-import os
