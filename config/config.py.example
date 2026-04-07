@@ -4,7 +4,7 @@ import os
 # 获取方式: https://bailian.console.aliyun.com/
 # 阿里云百炼 (DashScope) 配置
 DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxx" # 请替换为您的真实 Key
-DASHSCOPE_MODEL = "qwen-plus" # 或 qwen-max
+DASHSCOPE_MODEL = "qwen3.6-plus" # 或 qwen-max、qwen-plus
 
 # Bark App 中获取的 Key
 BARK_KEY = ""
@@ -19,7 +19,8 @@ WECHAT_CONFIG = {
 PUBLISH_CONFIG = {
     "enable_schedule": False,   # 是否启用定时发布
     "target_time": "20:00",    # 每天定时发布时间 (24小时制 HH:MM)
-    "timezone": 8              # 时区 (UTC+8)
+    "timezone": 8,             # 时区 (UTC+8)
+    "article_template": "wechat_default"  # 公众号正文模板(空字符串表示关闭)
 }
 
 

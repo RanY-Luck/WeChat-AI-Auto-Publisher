@@ -9,6 +9,7 @@ from utils.promo_generator import PromoGenerator
 from utils.wechat_publisher import WeChatPublisher
 from utils.bark_notifier import BarkNotifier
 from utils.logger import setup_logger
+from config.config import Config
 from PIL import Image
 
 # 设置日志
@@ -110,6 +111,7 @@ def generate_default_cover():
 
 def job():
     """定时执行的任务"""
+    config = Config()
     topic = get_topic_from_weibo_hot_search()
     if not topic:
         topic = random.choice(RANDOM_TOPICS)
@@ -140,13 +142,20 @@ def job():
             return
 
         # 3. 格式化
-        content_with_tags = f'<span style="font-size: 14px; font-weight: bold;">{result.get("content")}</span>'
+        article_template = (config.PUBLISH_CONFIG.get("article_template") or "").strip()
+        content = result.get("content", "")
+        if article_template:
+            content_for_publish = content
+        else:
+            content_for_publish = f'<span style="font-size: 14px; font-weight: bold;">{content}</span>'
+
         formatted_article = publisher.format_for_wechat(
-            content=content_with_tags,
+            content=content_for_publish,
             title=result.get('title'),
             author="Ran先生",
             summary=result.get('digest'),
-            cover_image=cover_path
+            cover_image=cover_path,
+            template_name=article_template,
         )
 
         # 4. 发布到草稿箱
@@ -172,7 +181,8 @@ def job():
 
 def main():
     # 每天 20:00 执行
-    scheduled_time = "14:30"
+    # scheduled_time = "14:30"
+    scheduled_time = "15:07"
     schedule.every().day.at(scheduled_time).do(job)
 
     logger.info(f"🚀 发帖机器人已启动！将在每天 {scheduled_time} 自动运行。")

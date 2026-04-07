@@ -36,6 +36,8 @@
 .
 ├─ config/
 │  └─ config.py.example
+├─ templates/
+│  └─ wechat_default.html
 ├─ utils/
 │  ├─ dashscope_api.py
 │  ├─ promo_generator.py
@@ -124,6 +126,7 @@ PUBLISH_CONFIG = {
     "enable_schedule": False,
     "target_time": "20:00",
     "timezone": 8,
+    "article_template": "wechat_default",
 }
 ```
 
@@ -131,6 +134,8 @@ PUBLISH_CONFIG = {
 
 - 这部分配置主要被 `generate_promo.py -p` 使用
 - 如果命令行没有传 `-t`，且 `enable_schedule=True`，程序会等待到 `target_time` 再执行发布
+- `article_template` 为空字符串时，继续使用旧的正文格式化逻辑
+- `article_template="wechat_default"` 时，会把 AI 正文塞进 `templates/wechat_default.html` 的 `{{content}}` 占位符
 
 ### 5. 路径配置
 
@@ -217,6 +222,16 @@ AI 当前会尝试生成以下字段：
 7. 发送 Bark 通知
 
 这意味着“发布”并不只是保存草稿。当前代码会进一步尝试自动发布。
+
+## 正文模板
+
+当前仓库内置一个本地公众号正文模板：
+
+- 模板文件：`templates/wechat_default.html`
+- 正文插槽：`{{content}}`
+- 渲染方式：保留模板头尾装饰，只把 AI 生成的正文插入到中间内容区
+
+如果模板源码是从公众号编辑器里复制出来的，加载时会自动还原常见的 `+` 和 HTML 转义字符。
 
 ## 定时任务模式
 

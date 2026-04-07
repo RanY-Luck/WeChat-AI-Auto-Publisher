@@ -4,6 +4,7 @@ import requests
 import json
 import time
 import re
+from html import unescape
 from PIL import Image
 from utils.logger import setup_logger
 from config.config import Config
@@ -104,7 +105,7 @@ class WeChatPublisher:
                 self.logger.error(f"请求异常 (尝试 {attempt + 1}/{max_retries}): {e}")
                 raise
 
-    def format_for_wechat(self, content, title, author="", cover_image="", summary=""):
+    def format_for_wechat(self, content, title, author="", cover_image="", summary="", template_name=""):
         """
         格式化内容以适应微信公众号的排版要求
 
@@ -114,6 +115,7 @@ class WeChatPublisher:
             author (str, optional): 作者
             cover_image (str, optional): 封面图片路径
             summary (str, optional): 文章摘要
+            template_name (str, optional): 模板文件名(不含扩展名)
 
         Returns:
             dict: 包含格式化后内容的字典
@@ -125,7 +127,10 @@ class WeChatPublisher:
             formatted_title = self._format_title(title)
 
             # 格式化内容
-            formatted_content = self._format_content(content)
+            if template_name:
+                formatted_content = self._render_template_content(template_name, content)
+            else:
+                formatted_content = self._format_content(content)
 
             # 格式化作者
             formatted_author = self._format_author(author)
@@ -164,15 +169,77 @@ class WeChatPublisher:
 
         return title
 
+    def _render_template_content(self, template_name, content):
+        """将正文渲染到完整模板中"""
+        template_html = self._load_template(template_name)
+        if "{{content}}" not in template_html:
+            raise ValueError(f"模板缺少 {{content}} 占位符: {template_name}")
+
+        body_html = self._format_content(content)
+        return template_html.replace("{{content}}", body_html, 1)
+
+    def _load_template(self, template_name):
+        """加载并标准化模板文件"""
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        template_path = os.path.join(project_root, "templates", f"{template_name}.html")
+
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"模板文件不存在: {template_path}")
+
+        with open(template_path, "r", encoding="utf-8") as template_file:
+            return self._normalize_template_html(template_file.read())
+
+    def _normalize_template_html(self, template_html):
+        """把公众号编辑器复制出的源码还原成正常 HTML"""
+        normalized = unescape(template_html or "")
+        normalized = normalized.replace("+", " ")
+        return normalized
+
     def _format_content(self, content):
         """格式化微信公众号文章内容"""
-        formatted = content.replace("\n\n", "</p><p>")
-        formatted = formatted.replace("\n", "<br/>")
-        formatted = f"<p>{formatted}</p>"
-        formatted = self._format_headings(formatted)
-        formatted = self._format_lists(formatted)
-        formatted = self._format_quotes(formatted)
-        return formatted
+        blocks = re.split(r"\n\s*\n", (content or "").strip())
+        rendered_blocks = []
+
+        for block in blocks:
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if not lines:
+                continue
+
+            if len(lines) == 1 and lines[0].startswith("### "):
+                rendered_blocks.append(f"<h4>{lines[0][4:]}</h4>")
+                continue
+
+            if len(lines) == 1 and lines[0].startswith("## "):
+                rendered_blocks.append(f"<h3>{lines[0][3:]}</h3>")
+                continue
+
+            if len(lines) == 1 and lines[0].startswith("# "):
+                rendered_blocks.append(f"<h2>{lines[0][2:]}</h2>")
+                continue
+
+            if all(line.startswith("- ") for line in lines):
+                items = "".join(f"<li>{line[2:]}</li>" for line in lines)
+                rendered_blocks.append(f"<ul>{items}</ul>")
+                continue
+
+            if all(re.match(r"^\d+\.\s+", line) for line in lines):
+                items = []
+                for line in lines:
+                    item_text = re.sub(r"^\d+\.\s+", "", line)
+                    items.append(f"<li>{item_text}</li>")
+                items = "".join(items)
+                rendered_blocks.append(f"<ol>{items}</ol>")
+                continue
+
+            if all(line.startswith("> ") for line in lines):
+                quote_html = "<br/>".join(line[2:] for line in lines)
+                rendered_blocks.append(f"<blockquote>{quote_html}</blockquote>")
+                continue
+
+            paragraph_html = "<br/>".join(lines)
+            rendered_blocks.append(f"<p>{paragraph_html}</p>")
+
+        return "".join(rendered_blocks)
 
     def _format_headings(self, content):
         """格式化标题"""

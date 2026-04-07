@@ -87,6 +87,7 @@ def wait_for_schedule(target_time_str):
 def main():
     config = Config()
     notifier = BarkNotifier()
+    article_template = (config.PUBLISH_CONFIG.get("article_template") or "").strip()
 
     parser = argparse.ArgumentParser(description="AI 情感文案生成器")
     parser.add_argument("text", nargs="?", help="输入主题、草稿或描述 (如果不填且使用 -r，则随机生成)")
@@ -156,17 +157,19 @@ def main():
                     return
 
                 # 2. 格式化文章
-                # 组合内容和标签
-                # content_with_tags = f"{result.get('content')}"
-                # 用户要求：字号 14px，加粗
-                content_with_tags = f'<span style="font-size: 14px; font-weight: bold;">{result.get("content")}</span>'
+                content = result.get("content", "")
+                if article_template:
+                    content_for_publish = content
+                else:
+                    content_for_publish = f'<span style="font-size: 14px; font-weight: bold;">{content}</span>'
 
                 formatted_article = publisher.format_for_wechat(
-                    content=content_with_tags,
+                    content=content_for_publish,
                     title=result.get('title'),
                     author="Ran先生",
                     summary=result.get('digest'),  # 使用AI生成的专用摘要
-                    cover_image=cover_path
+                    cover_image=cover_path,
+                    template_name=article_template,
                 )
 
                 # 3. 发布
