@@ -181,8 +181,7 @@ def job():
 
 def main():
     # 每天 20:00 执行
-    # scheduled_time = "14:30"
-    scheduled_time = "15:07"
+    scheduled_time = "14:30"
     schedule.every().day.at(scheduled_time).do(job)
 
     logger.info(f"🚀 发帖机器人已启动！将在每天 {scheduled_time} 自动运行。")

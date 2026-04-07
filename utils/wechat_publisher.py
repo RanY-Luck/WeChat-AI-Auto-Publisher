@@ -402,7 +402,7 @@ class WeChatPublisher:
                 "digest": digest,
                 "content": content,
                 "content_source_url": "",
-                "need_open_comment": 0,
+                "need_open_comment": 1,
                 "only_fans_can_comment": 0
             }
 
