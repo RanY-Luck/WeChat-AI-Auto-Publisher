@@ -61,7 +61,7 @@ class PromoGenerator:
                 # 组合特定格式的标题: 远方岛屿 {keyword} | {subtitle}
                 keyword = result.get("keyword", input_text[:5]) # 降级处理
                 subtitle = result.get("subtitle", "未生成标题")
-                result["title"] = f"远方岛屿 {keyword} | {subtitle}"
+                result["title"] = f"远方夜听 {keyword} | {subtitle}"
                 
                 # 确保有摘要，如果没有则使用内容截断（后备方案）
                 if not result.get("digest"):
@@ -72,7 +72,7 @@ class PromoGenerator:
                 logger.warning("JSON解析失败，尝试简单提取或返回原始文本")
                 # 如果解析失败，尝试手动构造结构（这里简单返回）
                 return {
-                    "title": f"远方岛屿 {input_text[:5]} | 自动生成失败",
+                    "title": f"远方夜听 {input_text[:5]} | 自动生成失败",
                     "digest": response_text[:100],
                     "tags": "",
                     "content": response_text
