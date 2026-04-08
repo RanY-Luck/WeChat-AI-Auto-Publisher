@@ -1,0 +1,12 @@
+.git
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+logs/
+temp/
+wechat-profile/
+wechat-ai-publisher.tar
+.env
+config/config.py

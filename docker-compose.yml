@@ -1,0 +1,25 @@
+services:
+  wechat-publisher:
+    container_name: wechat-publisher
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wechat-ai-publisher:latest
+    restart: unless-stopped
+    shm_size: "1gb"
+    environment:
+      TZ: Asia/Shanghai
+      VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD is required}
+      AUTO_OPEN_BROWSER: ${AUTO_OPEN_BROWSER:-true}
+      VNC_PORT: 5900
+      NOVNC_PORT: 6080
+      SCREEN_WIDTH: 1920
+      SCREEN_HEIGHT: 1080
+      SCREEN_DEPTH: 24
+    ports:
+      - "6080:6080"
+      - "5900:5900"
+    volumes:
+      - ./config/config.py:/app/config/config.py:ro
+      - ./logs:/app/logs
+      - ./wechat-profile:/data/wechat-profile

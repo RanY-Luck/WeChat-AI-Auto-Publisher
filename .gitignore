@@ -3,6 +3,7 @@
 .vscode/
 .cursor/
 .DS_Store
+Thumbs.db
 
 # Python 虚拟环境
 venv/
@@ -16,6 +17,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.coverage
+htmlcov/
 
 # AI 助手
 .claude/
@@ -47,9 +50,11 @@ config.yaml
 *.tmp
 *.temp
 .DS_Store
-Thumbs.db
 
 # 处理记录
-/temp
+temp/
 config/config.py
 *.tar
+*.zip
+release/
+wechat-profile/

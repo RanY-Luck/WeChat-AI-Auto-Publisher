@@ -9,6 +9,11 @@ DASHSCOPE_MODEL = "qwen3.6-plus" # 或 qwen-max、qwen-plus
 # Bark App 中获取的 Key
 BARK_KEY = ""
 
+# imgbb 图床 API Key (可选，备用图床)
+# 获取方式: https://api.imgbb.com/
+IMGBB_API_KEY = ""
+IMGBB_EXPIRATION = 600
+
 # 微信公众号配置
 WECHAT_CONFIG = {
     "app_id": "",  # 微信公众号AppID
@@ -18,9 +23,19 @@ WECHAT_CONFIG = {
 # 发布配置
 PUBLISH_CONFIG = {
     "enable_schedule": False,   # 是否启用定时发布
-    "target_time": "20:00",    # 每天定时发布时间 (24小时制 HH:MM)
+    "target_time": "20:00",    # Legacy backend schedule/draft time (24小时制 HH:MM)
     "timezone": 8,             # 时区 (UTC+8)
-    "article_template": "wechat_default"  # 公众号正文模板(空字符串表示关闭)
+    "article_template": "wechat_default",  # 公众号正文模板(空字符串表示关闭)
+    "enable_web_publish": True,
+    "publish_time": "20:00",   # UI web publish time shown in scheduler
+    "login_check_hours_before": 2,
+    "max_publish_retries": 3,
+}
+
+WEB_PUBLISH_CONFIG = {
+    "browser_profile_dir": "/data/wechat-profile",
+    "novnc_port": 6080,
+    "headless": False,
 }
 
 
@@ -80,6 +95,9 @@ class Config:
         self.WECHAT_CONFIG = WECHAT_CONFIG
         self.PUBLISH_CONFIG = PUBLISH_CONFIG
         self.BARK_KEY = globals().get('BARK_KEY') # 动态获取全局变量，防止未定义
+        self.IMGBB_API_KEY = IMGBB_API_KEY
+        self.IMGBB_EXPIRATION = IMGBB_EXPIRATION
+        self.WEB_PUBLISH_CONFIG = WEB_PUBLISH_CONFIG
 
         
         # 项目路径配置

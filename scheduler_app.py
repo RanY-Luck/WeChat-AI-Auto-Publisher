@@ -3,12 +3,15 @@ import time
 import random
 import os
 import re
-from html import unescape
 import requests
+from datetime import datetime, timedelta
+from html import unescape
 from utils.promo_generator import PromoGenerator
 from utils.wechat_publisher import WeChatPublisher
 from utils.bark_notifier import BarkNotifier
+from utils.imgbb_uploader import ImgbbUploader
 from utils.logger import setup_logger
+from utils.wechat_web_publisher import WeChatWebPublisher
 from config.config import Config
 from PIL import Image
 
@@ -109,6 +112,166 @@ def generate_default_cover():
         return None
 
 
+def compute_precheck_time(publish_time, hours_before):
+    # Daily schedule contract: if subtraction crosses midnight, return previous-day wall clock (e.g. 01:00 - 2h => 23:00).
+    publish_datetime = datetime.strptime(publish_time, "%H:%M")
+    precheck_datetime = publish_datetime - timedelta(hours=hours_before)
+    return precheck_datetime.strftime("%H:%M")
+
+
+def create_web_publisher(config):
+    web_config = getattr(config, "WEB_PUBLISH_CONFIG", {}) or {}
+    return WeChatWebPublisher(
+        profile_dir=web_config.get("browser_profile_dir", "/data/wechat-profile"),
+        headless=web_config.get("headless", False),
+    )
+
+
+def create_imgbb_uploader(config):
+    api_key = (getattr(config, "IMGBB_API_KEY", "") or "").strip()
+    if not api_key:
+        return None
+    expiration = getattr(config, "IMGBB_EXPIRATION", 600)
+    return ImgbbUploader(api_key=api_key, expiration=expiration)
+
+
+def _resolve_page(context):
+    pages = getattr(context, "pages", None)
+    if pages:
+        return pages[0]
+    if hasattr(context, "new_page"):
+        return context.new_page()
+    raise RuntimeError("无法从浏览器上下文获取页面对象")
+
+
+def _novnc_hint(config):
+    web_config = getattr(config, "WEB_PUBLISH_CONFIG", {}) or {}
+    novnc_port = web_config.get("novnc_port", 6080)
+    return f"请打开 noVNC 完成登录: http://<server-ip>:{novnc_port}/vnc.html"
+
+
+def _open_login_page(page, web_publisher):
+    base_url = getattr(web_publisher, "base_url", "https://mp.weixin.qq.com")
+    timeout_ms = getattr(web_publisher, "timeout_ms", 15000)
+    page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+
+def _safe_int(value, default, minimum=None):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    return parsed
+
+
+def login_precheck_job(
+    config=None,
+    notifier=None,
+    web_publisher=None,
+    uploader=None,
+    web_publisher_factory=None,
+    uploader_factory=None,
+):
+    config = config or Config()
+    notifier = notifier or BarkNotifier()
+    web_publisher_factory = web_publisher_factory or create_web_publisher
+    uploader_factory = uploader_factory or create_imgbb_uploader
+    web_publisher = web_publisher or web_publisher_factory(config)
+    uploader = uploader if uploader is not None else uploader_factory(config)
+
+    try:
+        context = web_publisher.launch_persistent_context()
+        page = _resolve_page(context)
+        _open_login_page(page, web_publisher)
+
+        if web_publisher.is_logged_in(page):
+            logger.info("登录预检查通过，当前已登录微信公众平台")
+            return True
+
+        screenshot_path = web_publisher.save_failure_screenshot(page, prefix="login-precheck")
+        uploaded_url = None
+        if uploader is not None:
+            try:
+                uploaded_url = uploader.upload(screenshot_path)
+            except Exception as upload_error:
+                logger.warning(f"登录预检查截图上传失败: {upload_error}")
+
+        if uploaded_url:
+            notifier.send(
+                title="微信登录预检查提醒",
+                content=f"检测到公众号后台未登录，请尽快扫码登录。{_novnc_hint(config)}",
+                url=uploaded_url,
+            )
+        else:
+            notifier.send(
+                title="微信登录预检查提醒",
+                content=f"检测到公众号后台未登录。{_novnc_hint(config)}",
+            )
+        return False
+    except Exception as e:
+        logger.error(f"登录预检查任务异常: {e}")
+        notifier.send(title="微信登录预检查异常", content=f"错误: {e}")
+        return False
+    finally:
+        try:
+            web_publisher.close()
+        except Exception as close_error:
+            logger.warning(f"登录预检查关闭浏览器失败: {close_error}")
+
+
+def publish_latest_draft_job(
+    config=None,
+    notifier=None,
+    web_publisher=None,
+    web_publisher_factory=None,
+):
+    config = config or Config()
+    notifier = notifier or BarkNotifier()
+    web_publisher_factory = web_publisher_factory or create_web_publisher
+    web_publisher = web_publisher or web_publisher_factory(config)
+    publish_config = getattr(config, "PUBLISH_CONFIG", {}) or {}
+    max_retries = _safe_int(publish_config.get("max_publish_retries"), default=3, minimum=1)
+
+    try:
+        context = web_publisher.launch_persistent_context()
+        page = _resolve_page(context)
+        _open_login_page(page, web_publisher)
+
+        if not web_publisher.is_logged_in(page):
+            notifier.send(
+                title="微信发布失败",
+                content=f"发布时检测到未登录，已跳过发布。{_novnc_hint(config)}",
+            )
+            return False
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                web_publisher.publish_latest_draft(page)
+                notifier.send(title="微信发布成功", content=f"草稿已成功发布（第 {attempt} 次尝试）")
+                return True
+            except Exception as publish_error:
+                last_error = publish_error
+                logger.warning(f"UI 发布第 {attempt}/{max_retries} 次失败: {publish_error}")
+
+        notifier.send(
+            title="微信发布失败",
+            content=f"草稿发布失败，已重试 {max_retries} 次。最后错误: {last_error}",
+        )
+        return False
+    except Exception as e:
+        logger.error(f"发布草稿任务异常: {e}")
+        notifier.send(title="微信发布异常", content=f"错误: {e}")
+        return False
+    finally:
+        try:
+            web_publisher.close()
+        except Exception as close_error:
+            logger.warning(f"发布任务关闭浏览器失败: {close_error}")
+
+
 def job():
     """定时执行的任务"""
     config = Config()
@@ -179,16 +342,84 @@ def job():
         notifier.send(title="定时任务异常", content=f"错误: {str(e)}")
 
 
-def main():
-    # 每天 20:00 执行
-    scheduled_time = "14:30"
-    schedule.every().day.at(scheduled_time).do(job)
+def schedule_jobs(
+    config=None,
+    scheduler_module=schedule,
+    draft_job_callable=None,
+    login_precheck_job_callable=None,
+    publish_latest_draft_job_callable=None,
+    notifier_factory=None,
+    web_publisher_factory=None,
+    uploader_factory=None,
+):
+    config = config or Config()
+    publish_config = config.PUBLISH_CONFIG or {}
+    draft_job_callable = draft_job_callable or job
+    login_precheck_job_callable = login_precheck_job_callable or login_precheck_job
+    publish_latest_draft_job_callable = (
+        publish_latest_draft_job_callable or publish_latest_draft_job
+    )
 
-    logger.info(f"🚀 发帖机器人已启动！将在每天 {scheduled_time} 自动运行。")
+    target_time = (publish_config.get("target_time") or "14:30").strip()
+    scheduler_module.every().day.at(target_time).do(draft_job_callable)
+
+    schedule_info = {
+        "target_time": target_time,
+        "web_publish_enabled": bool(publish_config.get("enable_web_publish")),
+        "publish_time": None,
+        "precheck_time": None,
+    }
+
+    if publish_config.get("enable_web_publish"):
+        publish_time = (publish_config.get("publish_time") or target_time).strip()
+        login_check_hours_before = _safe_int(
+            publish_config.get("login_check_hours_before"),
+            default=2,
+            minimum=0,
+        )
+        precheck_time = compute_precheck_time(publish_time, login_check_hours_before)
+
+        def run_login_precheck():
+            notifier = notifier_factory() if notifier_factory else None
+            return login_precheck_job_callable(
+                config=config,
+                notifier=notifier,
+                web_publisher_factory=web_publisher_factory,
+                uploader_factory=uploader_factory,
+            )
+
+        def run_publish_latest_draft():
+            notifier = notifier_factory() if notifier_factory else None
+            return publish_latest_draft_job_callable(
+                config=config,
+                notifier=notifier,
+                web_publisher_factory=web_publisher_factory,
+            )
+
+        scheduler_module.every().day.at(precheck_time).do(run_login_precheck)
+        scheduler_module.every().day.at(publish_time).do(run_publish_latest_draft)
+
+        schedule_info["publish_time"] = publish_time
+        schedule_info["precheck_time"] = precheck_time
+
+    return schedule_info
+
+
+def main():
+    config = Config()
+    schedule_info = schedule_jobs(config=config)
+    target_time = schedule_info["target_time"]
+
+    logger.info(f"🚀 发帖机器人已启动！将在每天 {target_time} 自动生成并保存草稿。")
+    if schedule_info["web_publish_enabled"]:
+        logger.info(
+            f"🌐 微信 UI 发布已启用，登录预检查时间: {schedule_info['precheck_time']}，"
+            f"发布时间: {schedule_info['publish_time']}"
+        )
     logger.info("正在等待时间到达... (按 Ctrl+C 退出)")
 
     # 启动时先发个 Bark 确认存活
-    BarkNotifier().send(title="服务启动", content=f"自动发文服务已在服务器启动\n每天 {scheduled_time} 执行")
+    BarkNotifier().send(title="服务启动", content=f"自动发文服务已在服务器启动\n每天 {target_time} 生成草稿")
 
     while True:
         schedule.run_pending()
