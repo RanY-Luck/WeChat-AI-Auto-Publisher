@@ -136,14 +136,14 @@ WECHAT_CONFIG = {
 ```python
 BARK_KEY = "你的 Bark Key"
 IMGBB_API_KEY = "你的 imgbb API Key"
-IMGBB_EXPIRATION = 600
+IMGBB_EXPIRATION = 86400
 ```
 
 说明：
 
 - 不配置 `BARK_KEY` 也能运行，只是不会发送推送
 - 不配置 `IMGBB_API_KEY` 时，登录预检仍会推送提醒，但不会带二维码截图链接
-- `IMGBB_EXPIRATION=600` 表示二维码截图链接保留 10 分钟
+- `IMGBB_EXPIRATION=86400` 表示二维码截图链接默认保留 24 小时
 
 ### 4. 发布配置
 
@@ -381,9 +381,11 @@ python scheduler_app.py
 
 其中浏览器登录态目录固定为 `/data/wechat-profile`，必须持久化挂载。
 
+当前 `docker-compose.yml` 已默认使用 Docker named volume `wechat-profile-data` 持久化这个目录。
+
 ### `wechat-profile` 是什么
 
-`wechat-profile/` 是 Chromium 的用户数据目录，会保存：
+`/data/wechat-profile` 是 Chromium 的用户数据目录，会保存：
 
 - 微信公众平台登录 Cookie / Session
 - 浏览器本地授权状态
@@ -399,16 +401,16 @@ python scheduler_app.py
 
 结论：
 
-- 本地调试时建议保留 `./wechat-profile`
-- 上传到公网服务器部署时，也建议把 `wechat-profile/` 一起放进 release 目录
-- 如果你不想从本地携带它，也至少要在服务器首次启动后登录一次，并持续保留服务器上的 `wechat-profile/`
+- Linux 服务器部署时，推荐直接使用 Docker volume 持久化，不需要手动准备 `wechat-profile/`
+- Windows 本地 Docker Desktop 调试时，浏览器 profile bind mount 可能不稳定，建议只把它当调试环境
+- 服务器首次启动后登录一次，并持续保留 Docker volume 中的 profile 数据
 
 ### 1. 本地准备 release 包
 
 ```bash
 cp docker-compose.yml.example docker-compose.yml
 cp .env.example .env
-mkdir -p logs wechat-profile
+mkdir -p logs
 ```
 
 然后准备好下面这些文件：
@@ -432,6 +434,11 @@ AUTO_OPEN_BROWSER=true
 ### 2. 本地构建镜像并导出
 
 ```bash
+win系统运行:
+.\build_release.bat
+```
+
+```bash
 docker build -t wechat-ai-publisher:latest .
 docker save -o wechat-ai-publisher.tar wechat-ai-publisher:latest
 ```
@@ -445,21 +452,26 @@ release/
 ├─ wechat-ai-publisher.tar
 ├─ docker-compose.yml
 ├─ .env
-├─ wechat-profile/
 └─ config/
    └─ config.py
 ```
 
-然后把整个 `release/` 上传到服务器。
+然后把整个 ` release.zip 或 release/` 上传到服务器。
 
 说明：
 
-- `logs/` 和 `wechat-profile/` 如果不存在，`docker compose up -d` 时会自动创建
+- `logs/` 如果不存在，`docker compose up -d` 时会自动创建
 - 当前镜像不会包含你的真实 `config.py`，所以 `config/config.py` 必须跟 release 包一起上传
-- `wechat-profile/` 不是代码目录，而是登录态目录；如果你希望服务器启动后直接沿用本地已经登录好的公众号后台，请把它一起上传
-- 如果你不上传 `wechat-profile/`，服务器第一次启动后仍然可以手动登录，但登录态只会从那次开始保存在服务器本地
+- 登录态默认保存在 Docker volume `wechat-profile-data` 中，不需要把 `wechat-profile/` 目录打包上传
+- 如果你确实想迁移本地登录态到服务器，需要额外改 compose，把 volume 改回 bind mount；这不是默认推荐路径
 
 ### 4. 服务器上直接 load + up
+
+```bash
+# 一键命令
+chmod +x deploy_centos7.sh
+./deploy_centos7.sh
+```
 
 ```bash
 cd release
@@ -471,7 +483,7 @@ docker compose up -d
 
 - `AUTO_OPEN_BROWSER=true` 时，容器启动后会自动在 noVNC 里打开公众号登录页
 - 首次扫码登录完成后，请把这个 Chromium 窗口关闭，避免后续 Playwright 发布时遇到 profile lock
-- 后续不要删除 `release/wechat-profile/`，否则服务器会丢失登录态
+- 后续不要删除 Docker volume `wechat-profile-data`，否则服务器会丢失登录态
 
 ### 5. 如果你更习惯 `docker run`
 
@@ -486,11 +498,15 @@ docker run -d \
   -p 5900:5900 \
   -v $(pwd)/config/config.py:/app/config/config.py:ro \
   -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/wechat-profile:/data/wechat-profile \
+  -v wechat-profile-data:/data/wechat-profile \
   wechat-ai-publisher:latest
 ```
 
-如果你是从 release 目录执行，上面的 `$(pwd)` 就会指向当前 release 目录。
+如果你使用 `docker run`，请先创建 volume：
+
+```bash
+docker volume create wechat-profile-data
+```
 
 ### 6. 首次登录
 
@@ -505,10 +521,10 @@ docker run -d \
 
 如果你是“本地打包 -> 上传服务器 -> 服务器直接运行”的模式，有两种可选方式：
 
-- 方式 A：把本地 `wechat-profile/` 一起打包上传。优点是服务器启动后通常可直接沿用本地登录态。
-- 方式 B：不上传 `wechat-profile/`，服务器首次启动后通过 noVNC 手动登录一次。优点是 release 包更干净，但首次部署多一步登录。
+- 方式 A：默认推荐。直接使用 Docker volume，服务器首次启动后通过 noVNC 或 Bark 二维码登录一次。
+- 方式 B：如果你非常需要迁移本地登录态，再额外改 compose 为 bind mount，把本地 `wechat-profile/` 一起上传。
 
-两种方式都可以，但二选一后都要长期保留服务器上的 `wechat-profile/`。
+两种方式都可以，但无论哪种，都要长期保留服务器上的 profile 数据。
 
 ### 7. 登录预检与 Bark 提醒
 

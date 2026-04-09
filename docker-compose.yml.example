@@ -22,4 +22,7 @@ services:
     volumes:
       - ./config/config.py:/app/config/config.py:ro
       - ./logs:/app/logs
-      - ./wechat-profile:/data/wechat-profile
+      - wechat-profile-data:/data/wechat-profile
+
+volumes:
+  wechat-profile-data:

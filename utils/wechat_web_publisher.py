@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import time
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 class WeChatWebPublisher:
@@ -39,7 +39,7 @@ class WeChatWebPublisher:
             browser_args = list(self.DEFAULT_BROWSER_ARGS) if self.executable_path else []
         self.browser_args = list(browser_args)
         if force_release_profile is None:
-            force_release_profile = os.environ.get("AUTO_OPEN_BROWSER", "").lower() == "true"
+            force_release_profile = os.environ.get("FORCE_RELEASE_PROFILE", "").lower() == "true"
         self.force_release_profile = bool(force_release_profile)
         self._playwright = None
         self._context = None
@@ -84,11 +84,20 @@ class WeChatWebPublisher:
         return False
 
     def open_draft_list(self, page):
+        original_url = getattr(page, "url", "")
         page.goto(
             self._home_url(),
             wait_until="domcontentloaded",
             timeout=self.timeout_ms,
         )
+        draft_href = self._get_draft_list_href(page, original_url=original_url)
+        if draft_href:
+            page.goto(
+                urljoin(self.base_url, draft_href),
+                wait_until="domcontentloaded",
+                timeout=self.timeout_ms,
+            )
+            return page
         page.locator(self._draft_list_entry_selector()).click()
         return page
 
@@ -114,6 +123,8 @@ class WeChatWebPublisher:
             self._click_first_visible_primary_button(publish_page)
             publish_page.wait_for_timeout(1500)
             self._click_first_visible_primary_button(publish_page, required=False)
+            self._wait_for_publish_confirmation(publish_page)
+            self._wait_for_draft_to_leave_publishable_state(page)
         except Exception:
             try:
                 self.save_failure_screenshot(page, prefix="publish-failed")
@@ -129,6 +140,19 @@ class WeChatWebPublisher:
             f"{prefix}-{resolved_timestamp}.png",
         )
         page.screenshot(path=screenshot_path, full_page=True)
+        return screenshot_path
+
+    def save_login_qr_screenshot(self, page, prefix="login-qr", timestamp=None):
+        os.makedirs(self.screenshots_dir, exist_ok=True)
+        resolved_timestamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+        screenshot_path = os.path.join(
+            self.screenshots_dir,
+            f"{prefix}-{resolved_timestamp}.png",
+        )
+        qr_locator = self._locate_login_qr(page)
+        if hasattr(page, "wait_for_timeout"):
+            page.wait_for_timeout(1000)
+        qr_locator.screenshot(path=screenshot_path)
         return screenshot_path
 
     def _start_playwright_runtime(self):
@@ -228,6 +252,12 @@ class WeChatWebPublisher:
     def _has_any_element(self, page, selectors):
         return any(self._has_element(page, selector) for selector in selectors)
 
+    def _first_visible_locator(self, page, selectors):
+        for selector in selectors:
+            if self._has_element(page, selector):
+                return page.locator(selector).first
+        return None
+
     def _wait_for_element(self, page, selector, timeout_ms):
         max_attempts = max(1, timeout_ms // 500)
         for _ in range(max_attempts):
@@ -284,6 +314,42 @@ class WeChatWebPublisher:
         self._click_locator(page.locator(selector).first)
         return True
 
+    def _wait_for_publish_confirmation(self, page):
+        max_attempts = max(1, self.timeout_ms // 500)
+        for _ in range(max_attempts):
+            if self._has_publish_confirmation(page):
+                return True
+            if hasattr(page, "wait_for_timeout"):
+                page.wait_for_timeout(500)
+        if self._has_publish_confirmation(page):
+            return True
+        raise RuntimeError("未确认发表成功")
+
+    def _has_publish_confirmation(self, page):
+        return self._has_any_element(page, self._publish_success_selectors())
+
+    def _wait_for_draft_to_leave_publishable_state(self, page):
+        max_attempts = max(1, self.timeout_ms // 1000)
+        for _ in range(max_attempts):
+            if self._latest_draft_is_not_publishable(page):
+                return True
+            if hasattr(page, "wait_for_timeout"):
+                page.wait_for_timeout(1000)
+        if self._latest_draft_is_not_publishable(page):
+            return True
+        raise RuntimeError("草稿仍可发表，未确认已从待发表列表移除")
+
+    def _latest_draft_is_not_publishable(self, page):
+        page.goto(
+            self._home_url(),
+            wait_until="domcontentloaded",
+            timeout=self.timeout_ms,
+        )
+        draft_card = self._locate_latest_draft_card(page)
+        return not self._locator_has_element(
+            draft_card.locator(self._draft_publish_entry_selector())
+        )
+
     def _hover_locator(self, locator):
         if hasattr(locator, "hover"):
             locator.hover()
@@ -293,6 +359,42 @@ class WeChatWebPublisher:
             locator.click(**kwargs)
         except TypeError:
             locator.click()
+
+    def _locator_has_element(self, locator):
+        if hasattr(locator, "count"):
+            return locator.count() > 0
+        if hasattr(locator, "is_visible"):
+            return bool(locator.is_visible())
+        return False
+
+    def _get_draft_list_href(self, page, original_url=""):
+        locator = page.locator(self._draft_list_link_selector())
+        if hasattr(locator, "get_attribute"):
+            href = locator.get_attribute("href")
+            if href:
+                return href
+        return self._build_draft_list_href_from_url(
+            getattr(page, "url", "") or original_url
+        ) or self._build_draft_list_href_from_url(original_url)
+
+    def _build_draft_list_href_from_url(self, current_url):
+        parsed = urlparse(current_url or "")
+        if parsed.netloc != "mp.weixin.qq.com":
+            return None
+        query = {}
+        for chunk in (parsed.query or "").split("&"):
+            if "=" not in chunk:
+                continue
+            key, value = chunk.split("=", 1)
+            query[key] = value
+        token = query.get("token")
+        lang = query.get("lang", "zh_CN")
+        if not token:
+            return None
+        return (
+            f"/cgi-bin/appmsg?begin=0&count=10&type=77&action=list_card"
+            f"&token={token}&lang={lang}"
+        )
 
     def _is_authenticated_url(self, current_url):
         if not current_url:
@@ -309,8 +411,22 @@ class WeChatWebPublisher:
     def _home_url(self):
         return self.base_url
 
+    def _locate_login_qr(self, page):
+        locator = self._first_visible_locator(page, self._login_qr_selectors())
+        if locator is None:
+            raise RuntimeError("未找到登录二维码元素")
+        return locator
+
     def _login_entry_selector(self):
         return "text=扫码登录"
+
+    def _login_qr_selectors(self):
+        return (
+            "img.js_login_qrcode",
+            ".js_login_qrcode img",
+            "img[src*='scanloginqrcode']",
+            ".login__type__container img",
+        )
 
     def _authenticated_shell_selectors(self):
         return (
@@ -324,6 +440,9 @@ class WeChatWebPublisher:
     def _draft_list_entry_selector(self):
         return "text=草稿箱"
 
+    def _draft_list_link_selector(self):
+        return "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"
+
     def _latest_draft_selector(self):
         return ".publish_card_container .weui-desktop-card:first-child"
 
@@ -335,3 +454,14 @@ class WeChatWebPublisher:
 
     def _visible_primary_button_selector(self):
         return "button.weui-desktop-btn.weui-desktop-btn_primary:visible"
+
+    def _publish_success_selectors(self):
+        return (
+            "text=发表成功",
+            "text=群发成功",
+            "text=发送成功",
+            "text=发表中",
+            "text=群发中",
+            "text=已发表",
+            "text=已群发",
+        )
