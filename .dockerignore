@@ -6,6 +6,9 @@ __pycache__/
 *.log
 logs/
 temp/
+temp-debug/
+release/
+release.zip
 wechat-profile/
 wechat-ai-publisher.tar
 .env
