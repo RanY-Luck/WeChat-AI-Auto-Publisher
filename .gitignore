@@ -53,6 +53,7 @@ config.yaml
 
 # 处理记录
 temp/
+temp-debug/
 config/config.py
 *.tar
 *.zip
