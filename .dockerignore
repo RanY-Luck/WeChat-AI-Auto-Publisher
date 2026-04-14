@@ -13,3 +13,7 @@ wechat-profile/
 wechat-ai-publisher.tar
 .env
 config/config.py
+instances/*
+!instances/_template/
+!instances/_template/.env.example
+!instances/_template/config.py.example

@@ -152,10 +152,19 @@ def _novnc_hint(config):
     return f"请打开 noVNC 完成登录: http://<server-ip>:{novnc_port}/vnc.html"
 
 
+def _notification_title(title):
+    prefix = (os.environ.get("BARK_TITLE_PREFIX", "") or "").strip()
+    if not prefix:
+        return title
+    if not prefix.endswith((" ", "　", "-", ":", "：")):
+        prefix = f"{prefix} "
+    return f"{prefix}{title}"
+
+
 def send_qr_debug_notification(image_url, notifier=None):
     notifier = notifier or BarkNotifier()
     return notifier.send_image(
-        title="微信扫码登录",
+        title=_notification_title("微信扫码登录"),
         image_url=image_url,
     )
 
@@ -183,7 +192,7 @@ def _is_profile_in_use_error(error):
 
 def _notify_profile_in_use(config, notifier, action_text):
     notifier.send(
-        title="微信登录窗口占用中",
+        title=_notification_title("微信登录窗口占用中"),
         content=(
             f"检测到公众号登录页已打开，当前先不执行{action_text}。"
             f"请扫码完成登录并关闭登录窗口后重试。{_novnc_hint(config)}"
@@ -229,7 +238,7 @@ def login_precheck_job(
             logger.warning(f"登录预检查检测到浏览器 profile 占用: {e}")
             return _notify_profile_in_use(config, notifier, "登录预检查")
         logger.error(f"登录预检查任务异常: {e}")
-        notifier.send(title="微信登录预检查异常", content=f"错误: {e}")
+        notifier.send(title=_notification_title("微信登录预检查异常"), content=f"错误: {e}")
         return False
     finally:
         try:
@@ -274,14 +283,17 @@ def publish_latest_draft_job(
         for attempt in range(1, max_retries + 1):
             try:
                 web_publisher.publish_latest_draft(page)
-                notifier.send(title="微信发布成功", content=f"草稿已成功发布（第 {attempt} 次尝试）")
+                notifier.send(
+                    title=_notification_title("微信发布成功"),
+                    content=f"草稿已成功发布（第 {attempt} 次尝试）",
+                )
                 return True
             except Exception as publish_error:
                 last_error = publish_error
                 logger.warning(f"UI 发布第 {attempt}/{max_retries} 次失败: {publish_error}")
 
         notifier.send(
-            title="微信发布失败",
+            title=_notification_title("微信发布失败"),
             content=f"草稿发布失败，已重试 {max_retries} 次。最后错误: {last_error}",
         )
         return False
@@ -290,7 +302,7 @@ def publish_latest_draft_job(
             logger.warning(f"发布任务检测到浏览器 profile 占用: {e}")
             return _notify_profile_in_use(config, notifier, "自动发布")
         logger.error(f"发布草稿任务异常: {e}")
-        notifier.send(title="微信发布异常", content=f"错误: {e}")
+        notifier.send(title=_notification_title("微信发布异常"), content=f"错误: {e}")
         return False
     finally:
         try:
@@ -318,7 +330,7 @@ def job():
 
         if not result:
             logger.error("文案生成失败")
-            notifier.send(title="定时任务失败", content="文案生成失败，请检查日志")
+            notifier.send(title=_notification_title("定时任务失败"), content="文案生成失败，请检查日志")
             return
 
         logger.info(f"文案生成成功: {result.get('title')}")
@@ -354,11 +366,17 @@ def job():
         if publish_result:
             msg = f"✅ 定时发布成功! Media ID: {publish_result.get('media_id')}"
             logger.info(msg)
-            notifier.send(title="定时发布成功", content=f"主题: {topic}\n标题: {result.get('title')}")
+            notifier.send(
+                title=_notification_title("定时发布成功"),
+                content=f"主题: {topic}\n标题: {result.get('title')}",
+            )
         else:
             msg = "❌ 定时发布失败"
             logger.error(msg)
-            notifier.send(title="定时发布失败", content=f"主题: {topic}\n请检查日志")
+            notifier.send(
+                title=_notification_title("定时发布失败"),
+                content=f"主题: {topic}\n请检查日志",
+            )
 
         # 清理
         if os.path.exists(cover_path):
@@ -366,7 +384,7 @@ def job():
 
     except Exception as e:
         logger.error(f"定时任务执行异常: {e}")
-        notifier.send(title="定时任务异常", content=f"错误: {str(e)}")
+        notifier.send(title=_notification_title("定时任务异常"), content=f"错误: {str(e)}")
 
 
 def _notify_login_required(config, notifier, web_publisher, page, uploader=None):
@@ -385,13 +403,13 @@ def _notify_login_required(config, notifier, web_publisher, page, uploader=None)
 
     if uploaded_url:
         notifier.send_image(
-            title="微信扫码登录",
+            title=_notification_title("微信扫码登录"),
             image_url=uploaded_url,
         )
         return False
 
     notifier.send(
-        title="微信登录预检查提醒",
+        title=_notification_title("微信登录预检查提醒"),
         content=f"检测到公众号后台未登录。{_novnc_hint(config)}",
     )
     return False
@@ -512,7 +530,10 @@ def main(argv=None):
     logger.info("正在等待时间到达... (按 Ctrl+C 退出)")
 
     # 启动时先发个 Bark 确认存活
-    BarkNotifier().send(title="服务启动", content=f"自动发文服务已在服务器启动\n每天 {target_time} 生成草稿")
+    BarkNotifier().send(
+        title=_notification_title("服务启动"),
+        content=f"自动发文服务已在服务器启动\n每天 {target_time} 生成草稿",
+    )
     run_startup_login_precheck(config=config)
 
     while True:

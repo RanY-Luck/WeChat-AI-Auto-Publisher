@@ -463,9 +463,16 @@ class WeChatPublisher:
                     try:
                         publish_result = self._submit_publish(media_id)
                         result["publish_result"] = publish_result
-                        self.logger.info(f"文章自动发布成功: {publish_result}")
+                        if publish_result.get("errcode") not in (None, 0):
+                            result["auto_publish_succeeded"] = False
+                            result["publish_error"] = f"发布失败: {publish_result}"
+                            self.logger.warning(f"文章自动发布失败: {publish_result}")
+                        else:
+                            result["auto_publish_succeeded"] = True
+                            self.logger.info(f"文章自动发布成功: {publish_result}")
                     except Exception as publish_error:
                         self.logger.error(f"自动发布失败(草稿已保存): {publish_error}")
+                        result["auto_publish_succeeded"] = False
                         result["publish_error"] = str(publish_error)
 
                 return result

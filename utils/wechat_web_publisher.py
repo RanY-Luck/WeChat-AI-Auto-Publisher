@@ -307,12 +307,30 @@ class WeChatWebPublisher:
 
     def _click_first_visible_primary_button(self, page, required=True):
         selector = self._visible_primary_button_selector()
+        if required:
+            self._wait_for_element(page, selector, timeout_ms=min(self.timeout_ms, 5000))
         if not self._has_element(page, selector):
             if required:
                 raise RuntimeError("未找到可见的确认按钮")
             return False
-        self._click_locator(page.locator(selector).first)
-        return True
+        locator = page.locator(selector).first
+        max_attempts = max(1, min(10, self.timeout_ms // 500))
+        last_error = None
+
+        for attempt in range(max_attempts):
+            try:
+                self._click_locator(locator)
+                return True
+            except Exception as error:
+                if not self._is_pointer_interception_error(error):
+                    raise
+                last_error = error
+                if attempt == max_attempts - 1:
+                    break
+                if hasattr(page, "wait_for_timeout"):
+                    page.wait_for_timeout(500)
+
+        raise last_error
 
     def _wait_for_publish_confirmation(self, page):
         max_attempts = max(1, self.timeout_ms // 500)
@@ -360,6 +378,10 @@ class WeChatWebPublisher:
         except TypeError:
             locator.click()
 
+    def _is_pointer_interception_error(self, error):
+        message = str(error).lower()
+        return "intercepts pointer events" in message
+
     def _locator_has_element(self, locator):
         if hasattr(locator, "count"):
             return locator.count() > 0
@@ -368,8 +390,9 @@ class WeChatWebPublisher:
         return False
 
     def _get_draft_list_href(self, page, original_url=""):
-        locator = page.locator(self._draft_list_link_selector())
-        if hasattr(locator, "get_attribute"):
+        selector = self._draft_list_link_selector()
+        locator = page.locator(selector)
+        if self._has_element(page, selector) and hasattr(locator, "get_attribute"):
             href = locator.get_attribute("href")
             if href:
                 return href

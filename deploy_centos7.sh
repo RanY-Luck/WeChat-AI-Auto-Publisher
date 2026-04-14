@@ -5,7 +5,18 @@ cd "$(dirname "$0")"
 
 IMAGE_NAME="${IMAGE_NAME:-wechat-ai-publisher:latest}"
 TAR_PATH="${TAR_PATH:-./wechat-ai-publisher.tar}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+MULTI_INSTANCE_COMPOSE_FILE="docker-compose.multi.yml"
+SINGLE_INSTANCE_COMPOSE_FILE="docker-compose.yml"
+
+default_compose_file() {
+    if [ -f "$MULTI_INSTANCE_COMPOSE_FILE" ] && [ -d "instances" ]; then
+        echo "$MULTI_INSTANCE_COMPOSE_FILE"
+        return 0
+    fi
+    echo "$SINGLE_INSTANCE_COMPOSE_FILE"
+}
+
+COMPOSE_FILE="${COMPOSE_FILE:-$(default_compose_file)}"
 CONTAINER_NAME="${CONTAINER_NAME:-wechat-publisher}"
 
 need_file() {
@@ -36,13 +47,22 @@ resolve_compose_cmd() {
 
 need_file "$TAR_PATH"
 need_file "$COMPOSE_FILE"
-need_file ".env"
-need_file "config/config.py"
+
+if [ "$COMPOSE_FILE" = "$MULTI_INSTANCE_COMPOSE_FILE" ]; then
+    if [ ! -d "instances" ]; then
+        echo "ERROR: Missing required directory for multi-instance deployment: instances"
+        exit 1
+    fi
+else
+    need_file ".env"
+    need_file "config/config.py"
+fi
 
 COMPOSE_CMD="$(resolve_compose_cmd)"
+export COMPOSE_FILE
 
 echo "[1/4] Stopping existing deployment..."
-$COMPOSE_CMD down || true
+$COMPOSE_CMD down --remove-orphans || true
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 echo "[2/4] Removing existing image..."
@@ -52,8 +72,9 @@ echo "[3/4] Loading image tar..."
 docker load -i wechat-ai-publisher.tar
 
 echo "[4/4] Starting deployment..."
-$COMPOSE_CMD up -d
+$COMPOSE_CMD up -d --remove-orphans
 
 echo "Done."
+echo "Compose file: $COMPOSE_FILE"
 echo "Container: $CONTAINER_NAME"
 echo "Image: $IMAGE_NAME"

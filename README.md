@@ -44,6 +44,10 @@
 │  └─ config.py.example
 ├─ docker/
 │  └─ start.sh
+├─ instances/
+│  └─ _template/
+│     ├─ .env.example
+│     └─ config.py.example
 ├─ templates/
 │  └─ wechat_default.html
 ├─ tests/
@@ -56,6 +60,7 @@
 │  ├─ wechat_web_publisher.py
 │  └─ logger.py
 ├─ docker-compose.yml.example
+├─ docker-compose.multi.yml
 ├─ generate_promo.py
 ├─ scheduler_app.py
 ├─ Dockerfile
@@ -122,7 +127,7 @@ DASHSCOPE_MODEL = "qwen3.6-plus"
 WECHAT_CONFIG = {
     "app_id": "你的公众号 AppID",
     "app_secret": "你的公众号 AppSecret",
-    # "proxy_url": "http://你的代理地址:端口"
+    "proxy_url": "http://你的代理地址:端口"
 }
 ```
 
@@ -429,6 +434,19 @@ mkdir -p logs
 ```env
 VNC_PASSWORD=replace-with-a-strong-password
 AUTO_OPEN_BROWSER=true
+NOVNC_HOST_PORT=6080
+VNC_HOST_PORT=5900
+```
+
+说明：
+
+- `NOVNC_HOST_PORT` / `VNC_HOST_PORT` 控制宿主机映射端口
+- 容器内部仍固定监听 `6080` / `5900`
+- 如果本机 `6080` 或 `5900` 被占用，可以只改 `.env`，例如：
+
+```env
+NOVNC_HOST_PORT=16080
+VNC_HOST_PORT=15900
 ```
 
 ### 2. 本地构建镜像并导出
@@ -494,8 +512,8 @@ docker run -d \
   --shm-size=1g \
   -e VNC_PASSWORD='replace-with-a-strong-password' \
   -e AUTO_OPEN_BROWSER='true' \
-  -p 6080:6080 \
-  -p 5900:5900 \
+  -p 16080:6080 \
+  -p 15900:5900 \
   -v $(pwd)/config/config.py:/app/config/config.py:ro \
   -v $(pwd)/logs:/app/logs \
   -v wechat-profile-data:/data/wechat-profile \
@@ -510,7 +528,7 @@ docker volume create wechat-profile-data
 
 ### 6. 首次登录
 
-1. 打开 `http://<server-ip>:6080/vnc.html`
+1. 打开 `http://<server-ip>:<NOVNC_HOST_PORT>/vnc.html`
 2. 输入 `VNC_PASSWORD`
 3. 若开启了 `AUTO_OPEN_BROWSER=true`，会自动看到公众号登录页；否则手动启动浏览器访问 `https://mp.weixin.qq.com`
 4. 在 noVNC 里的浏览器中扫码登录公众号后台
@@ -548,10 +566,10 @@ PUBLISH_CONFIG = {
 
 ### 8. 运行时端口
 
-- `6080`：noVNC Web 页面，示例 `http://<server-ip>:6080/vnc.html`
-- `5900`：原生 VNC 端口，可选
+- `NOVNC_HOST_PORT`：宿主机 noVNC Web 端口，示例 `http://<server-ip>:16080/vnc.html`
+- `VNC_HOST_PORT`：宿主机原生 VNC 端口，可选，示例 `15900`
 
-`6080` 和 `5900` 都不要直接裸露到公网。至少应放在防火墙白名单、VPN、堡垒机或反向代理访问控制之后。
+无论你映射到哪个宿主机端口，都不要直接裸露到公网。至少应放在防火墙白名单、VPN、堡垒机或反向代理访问控制之后。
 
 ### 9. 常用排查命令
 
@@ -568,6 +586,139 @@ ls -la /data/wechat-profile
 1. 打开 `https://mp.weixin.qq.com`
 2. 进入“开发 -> 基本配置 -> IP 白名单”
 3. 添加你的服务器公网 IP
+
+## 多实例 Docker 部署
+
+如果你要在同一台服务器上跑多个公众号实例，推荐保留当前单实例 `docker-compose.yml` 作为简单模式，再使用 `docker-compose.multi.yml` 作为正式多实例部署入口。
+
+核心原则：
+
+- 一个公众号实例对应一个独立容器
+- 一个实例只挂一份 `config.py`
+- 一个实例只保留一个独立浏览器登录态 volume
+- 一个实例只占用一组宿主机 noVNC / VNC 端口
+
+### 实例目录结构
+
+仓库已经提供模板目录 `instances/_template/`：
+
+```text
+instances/
+├─ _template/
+│  ├─ .env.example
+│  └─ config.py.example
+├─ foo/
+│  ├─ .env
+│  └─ config.py
+└─ bar/
+   ├─ .env
+   └─ config.py
+```
+
+其中：
+
+- `INSTANCE_SLUG`：实例简称，也是目录名、service 名、容器名的一部分
+- `INSTANCE_NAME`：给人看的显示名
+- `BARK_TITLE_PREFIX`：Bark 标题前缀，用来提示哪个实例需要扫码
+
+实例 `.env` 里至少应包含：
+
+```env
+INSTANCE_SLUG=foo
+INSTANCE_NAME=公众号A
+BARK_TITLE_PREFIX=[公众号A]
+VNC_PASSWORD=replace-with-a-strong-password
+AUTO_OPEN_BROWSER=true
+```
+
+多实例模式下，宿主机端口直接写在 `docker-compose.multi.yml`，不要指望通过 `instances/<slug>/.env` 来改 noVNC / VNC 映射。
+
+### 新增一个公众号实例
+
+1. 复制 `instances/_template/` 到 `instances/<简称>/`
+2. 编辑 `instances/<简称>/.env`
+3. 编辑 `instances/<简称>/config.py`
+4. 在 `docker-compose.multi.yml` 里新增一个 service
+5. 直接在 `docker-compose.multi.yml` 里为这个实例分配唯一的宿主机 noVNC / VNC 端口
+
+### 扫码时怎么知道该扫哪个
+
+不要只看二维码图片本身，要同时看这 4 个标识：
+
+- `INSTANCE_SLUG`
+- `INSTANCE_NAME`
+- `BARK_TITLE_PREFIX`
+- noVNC 访问端口
+
+建议维护一张固定映射表：
+
+```text
+简称   显示名    noVNC端口  VNC端口  容器名
+foo    兔子      16080      15900    wechat-publisher-foo
+bar    冉先生    16081      15901    wechat-publisher-bar
+```
+
+这样当 Bark 提示 `[兔子] 微信扫码登录` 时，你就知道应该打开：
+
+```text
+http://<server-ip>:16080/vnc.html
+```
+
+### 多实例 compose 示例
+
+`docker-compose.multi.yml` 当前包含两个示例 service：
+
+- `wechat-foo`
+- `wechat-bar`
+
+每个 service 都会：
+
+- 读取自己的 `./instances/<slug>/.env`
+- 挂载自己的 `./instances/<slug>/config.py`
+- 使用自己的 `./logs/<slug>` 日志目录
+- 使用自己的 `wechat-profile-<slug>` 浏览器登录态 volume
+
+### 多实例启动命令
+
+启动全部实例：
+
+```bash
+docker compose -f docker-compose.multi.yml up -d
+```
+
+如果你使用仓库里的部署脚本，在服务器上可以直接：
+
+```bash
+./deploy_centos7.sh
+```
+
+脚本会在当前目录同时存在 `docker-compose.multi.yml` 和 `instances/` 时自动优先按多实例部署。
+
+只启动某一个实例：
+
+```bash
+docker compose -f docker-compose.multi.yml up -d wechat-foo
+```
+
+查看某个实例日志：
+
+```bash
+docker compose -f docker-compose.multi.yml logs -f wechat-foo
+```
+
+停止全部实例：
+
+```bash
+docker compose -f docker-compose.multi.yml down
+```
+
+### 多实例部署注意事项
+
+- `docker-compose.multi.yml` 里的宿主机端口示例是固定写死的，新增实例时请手工分配新端口
+- `instances/<slug>/.env` 通过 `env_file` 注入到容器运行时环境，但不会参与 Compose 的宿主机端口插值
+- `instances/*` 已从 Docker build context 中排除，避免真实实例配置被打进镜像
+- `instances/_template/` 保留在仓库中，只作为模板，不参与运行
+- 多实例模式下，建议每个实例使用不同的 `VNC_PASSWORD`
 
 ## 已知限制
 

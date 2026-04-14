@@ -59,3 +59,7 @@ config/config.py
 *.zip
 release/
 wechat-profile/
+instances/*
+!instances/_template/
+!instances/_template/.env.example
+!instances/_template/config.py.example

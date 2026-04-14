@@ -17,8 +17,8 @@ services:
       SCREEN_HEIGHT: 1080
       SCREEN_DEPTH: 24
     ports:
-      - "6080:6080"
-      - "5900:5900"
+      - "${NOVNC_HOST_PORT:-6080}:6080"
+      - "${VNC_HOST_PORT:-5900}:5900"
     volumes:
       - ./config/config.py:/app/config/config.py:ro
       - ./logs:/app/logs

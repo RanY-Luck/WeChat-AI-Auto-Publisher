@@ -246,6 +246,27 @@ class SchedulerWebPublishTest(unittest.TestCase):
                 self.assertIsNone(notifier.calls[0]["url"])
                 self.assertIn("noVNC", notifier.calls[0]["content"])
 
+    def test_login_precheck_prefixes_titles_when_instance_prefix_configured(self):
+        config = SimpleNamespace(
+            WEB_PUBLISH_CONFIG={"novnc_port": 6080},
+            PUBLISH_CONFIG={"max_publish_retries": 3},
+        )
+        notifier = FakeNotifier()
+        page = FakePage()
+        web_publisher = FakeWebPublisher(page=page, logged_in=False)
+
+        with patch.dict("os.environ", {"BARK_TITLE_PREFIX": "[公众号B] "}, clear=False):
+            result = scheduler_app.login_precheck_job(
+                config=config,
+                notifier=notifier,
+                uploader=None,
+                uploader_factory=lambda _config: None,
+                web_publisher=web_publisher,
+            )
+
+        self.assertFalse(result)
+        self.assertEqual(notifier.calls[0]["title"], "[公众号B] 微信登录预检查提醒")
+
     def test_send_qr_debug_notification_uses_icon_only_without_click_url(self):
         notifier = FakeNotifier()
 
@@ -259,6 +280,18 @@ class SchedulerWebPublishTest(unittest.TestCase):
         self.assertEqual(notifier.calls[0]["title"], "微信扫码登录")
         self.assertIsNone(notifier.calls[0]["content"])
         self.assertEqual(notifier.calls[0]["image_url"], "https://imgbb.example/debug-qr.png")
+
+    def test_send_qr_debug_notification_prefixes_title_when_instance_prefix_configured(self):
+        notifier = FakeNotifier()
+
+        with patch.dict("os.environ", {"BARK_TITLE_PREFIX": "[公众号A] "}, clear=False):
+            scheduler_app.send_qr_debug_notification(
+                notifier=notifier,
+                image_url="https://imgbb.example/debug-qr.png",
+            )
+
+        self.assertEqual(len(notifier.calls), 1)
+        self.assertEqual(notifier.calls[0]["title"], "[公众号A] 微信扫码登录")
 
     def test_main_supports_debug_bark_icon_mode(self):
         with patch.object(scheduler_app, "send_qr_debug_notification") as send_debug:

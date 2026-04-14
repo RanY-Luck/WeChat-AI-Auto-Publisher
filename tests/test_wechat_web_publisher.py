@@ -26,7 +26,7 @@ class FakeLocator:
         return self.page.counts.get(self.selector, 0) > 0
 
     def click(self, *args, **kwargs):
-        self.page.click_selector(self.selector)
+        self.page.click_selector(self.selector, **kwargs)
 
     def hover(self):
         self.page.hover_selector(self.selector)
@@ -39,6 +39,8 @@ class FakeLocator:
         return b"ok"
 
     def get_attribute(self, name):
+        if self.selector == self.page.fail_get_attribute_selector:
+            raise self.page.fail_get_attribute_exception
         return self.page.attributes.get((self.selector, name))
 
 
@@ -47,7 +49,10 @@ class FakePage:
         self,
         counts=None,
         goto_side_effects=None,
+        wait_side_effects=None,
         attributes=None,
+        fail_get_attribute_selector=None,
+        fail_get_attribute_exception=None,
         fail_click_selector=None,
         fail_click_exception=None,
         screenshot_exception=None,
@@ -58,9 +63,13 @@ class FakePage:
     ):
         self.counts = counts or {}
         self.goto_side_effects = list(goto_side_effects or [])
+        self.wait_side_effects = list(wait_side_effects or [])
         self.attributes = attributes or {}
+        self.fail_get_attribute_selector = fail_get_attribute_selector
+        self.fail_get_attribute_exception = fail_get_attribute_exception
         self.fail_click_selector = fail_click_selector
         self.fail_click_exception = fail_click_exception
+        self.fail_click_sequence = {}
         self.screenshot_exception = screenshot_exception
         self.evaluate_result = evaluate_result
         self.evaluate_exception = evaluate_exception
@@ -93,12 +102,24 @@ class FakePage:
 
     def wait_for_timeout(self, value):
         self.calls.append(("wait_for_timeout", value))
+        if self.wait_side_effects:
+            self.counts = dict(self.wait_side_effects.pop(0))
 
     def wait_for_load_state(self, state=None):
         self.calls.append(("wait_for_load_state", state))
 
     def click_selector(self, selector):
-        self.calls.append(("click", selector))
+        return self.click_selector_with_kwargs(selector)
+
+    def click_selector_with_kwargs(self, selector, **kwargs):
+        if kwargs:
+            self.calls.append(("click", selector, kwargs))
+        else:
+            self.calls.append(("click", selector))
+        if selector in self.fail_click_sequence and self.fail_click_sequence[selector]:
+            next_exception = self.fail_click_sequence[selector].pop(0)
+            if next_exception is not None:
+                raise next_exception
         if selector == self.fail_click_selector:
             if self.fail_click_exception is not None:
                 raise self.fail_click_exception
@@ -238,6 +259,104 @@ class WeChatWebPublisherTest(unittest.TestCase):
             ],
         )
 
+    def test_publish_latest_draft_waits_for_delayed_primary_confirmation_button(self):
+        publisher = self._create_publisher()
+        publish_page = FakePage(
+            counts={
+                "button.mass_send": 1,
+            },
+            wait_side_effects=[
+                {
+                    "button.mass_send": 1,
+                },
+                {
+                    "button.mass_send": 1,
+                    "button.weui-desktop-btn.weui-desktop-btn_primary:visible": 1,
+                    "text=发表成功": 1,
+                },
+                {
+                    "button.mass_send": 1,
+                    "text=发表成功": 1,
+                },
+            ],
+            url="https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77",
+        )
+        page = FakePage(
+            goto_side_effects=[
+                {
+                    ".publish_card_container": 1,
+                    ".publish_enable_button a": 1,
+                },
+                {
+                    ".publish_card_container": 1,
+                },
+            ],
+            popup_page=publish_page,
+        )
+        FakeContext([page])
+
+        publisher.publish_latest_draft(page)
+
+        publish_clicks = [entry[1] for entry in publish_page.calls if entry[0] == "click"]
+        self.assertEqual(
+            publish_clicks,
+            [
+                "button.mass_send",
+                "button.weui-desktop-btn.weui-desktop-btn_primary:visible",
+            ],
+        )
+
+    def test_publish_latest_draft_retries_primary_confirmation_after_transient_dialog_intercepts_click(self):
+        publisher = self._create_publisher()
+        publish_page = FakePage(
+            counts={
+                "button.mass_send": 1,
+                "button.weui-desktop-btn.weui-desktop-btn_primary:visible": 1,
+            },
+            wait_side_effects=[
+                {
+                    "button.mass_send": 1,
+                    "button.weui-desktop-btn.weui-desktop-btn_primary:visible": 1,
+                    "text=发表成功": 1,
+                },
+                {
+                    "button.mass_send": 1,
+                    "text=发表成功": 1,
+                },
+            ],
+            url="https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77",
+        )
+        publish_page.fail_click_sequence = {
+            "button.weui-desktop-btn.weui-desktop-btn_primary:visible": [
+                RuntimeError("dialog intercepts pointer events"),
+            ],
+        }
+        page = FakePage(
+            goto_side_effects=[
+                {
+                    ".publish_card_container": 1,
+                    ".publish_enable_button a": 1,
+                },
+                {
+                    ".publish_card_container": 1,
+                },
+            ],
+            popup_page=publish_page,
+        )
+        FakeContext([page])
+
+        publisher.publish_latest_draft(page)
+
+        publish_clicks = [entry[1] for entry in publish_page.calls if entry[0] == "click"]
+        self.assertEqual(
+            publish_clicks,
+            [
+                "button.mass_send",
+                "button.weui-desktop-btn.weui-desktop-btn_primary:visible",
+                "button.weui-desktop-btn.weui-desktop-btn_primary:visible",
+            ],
+        )
+
     def test_publish_latest_draft_raises_when_publish_success_cannot_be_confirmed(self):
         with tempfile.TemporaryDirectory() as screenshot_dir:
             publisher = self._create_publisher(screenshots_dir=screenshot_dir)
@@ -358,6 +477,7 @@ class WeChatWebPublisherTest(unittest.TestCase):
             [
                 ("goto", "https://mp.weixin.qq.com", "domcontentloaded", 4321),
                 ("locator", "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"),
+                ("locator", "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"),
                 ("locator", "text=草稿箱"),
                 ("click", "text=草稿箱"),
             ],
@@ -366,6 +486,7 @@ class WeChatWebPublisherTest(unittest.TestCase):
     def test_open_draft_list_prefers_direct_draft_href_when_available(self):
         publisher = self._create_publisher(timeout_ms=4321)
         page = FakePage(
+            counts={"a[href*='/cgi-bin/appmsg'][href*='action=list_card']": 1},
             attributes={
                 ("a[href*='/cgi-bin/appmsg'][href*='action=list_card']", "href"): (
                     "/cgi-bin/appmsg?begin=0&count=10&type=77&action=list_card&token=123&lang=zh_CN"
@@ -380,6 +501,7 @@ class WeChatWebPublisherTest(unittest.TestCase):
             page.calls,
             [
                 ("goto", "https://mp.weixin.qq.com", "domcontentloaded", 4321),
+                ("locator", "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"),
                 ("locator", "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"),
                 (
                     "goto",
@@ -404,9 +526,38 @@ class WeChatWebPublisherTest(unittest.TestCase):
             [
                 ("goto", "https://mp.weixin.qq.com", "domcontentloaded", 4321),
                 ("locator", "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"),
+                ("locator", "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"),
                 (
                     "goto",
                     "https://mp.weixin.qq.com/cgi-bin/appmsg?begin=0&count=10&type=77&action=list_card&token=456&lang=zh_CN",
+                    "domcontentloaded",
+                    4321,
+                ),
+            ],
+        )
+
+    def test_open_draft_list_skips_get_attribute_when_menu_link_missing(self):
+        publisher = self._create_publisher(timeout_ms=4321)
+        selector = "a[href*='/cgi-bin/appmsg'][href*='action=list_card']"
+        page = FakePage(
+            counts={},
+            url="https://mp.weixin.qq.com/cgi-bin/home?t=home/index&lang=zh_CN&token=789",
+            fail_get_attribute_selector=selector,
+            fail_get_attribute_exception=RuntimeError("should not call get_attribute"),
+        )
+
+        returned_page = publisher.open_draft_list(page)
+
+        self.assertIs(returned_page, page)
+        self.assertEqual(
+            page.calls,
+            [
+                ("goto", "https://mp.weixin.qq.com", "domcontentloaded", 4321),
+                ("locator", selector),
+                ("locator", selector),
+                (
+                    "goto",
+                    "https://mp.weixin.qq.com/cgi-bin/appmsg?begin=0&count=10&type=77&action=list_card&token=789&lang=zh_CN",
                     "domcontentloaded",
                     4321,
                 ),

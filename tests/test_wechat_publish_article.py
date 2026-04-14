@@ -50,6 +50,38 @@ class WeChatPublishArticleTest(unittest.TestCase):
         self.assertEqual(article_data['need_open_comment'], 1)
         self.assertEqual(article_data['only_fans_can_comment'], 0)
 
+    def test_publish_article_marks_auto_publish_failure_without_losing_draft_success(self):
+        publisher = self._create_publisher()
+
+        def fake_request(method, url, **kwargs):
+            return SimpleNamespace(json=lambda: {'media_id': 'draft-media-id'})
+
+        with patch.object(publisher, '_make_request', side_effect=fake_request), \
+             patch.object(
+                 publisher,
+                 '_submit_publish',
+                 return_value={
+                     'errcode': 48001,
+                     'errmsg': 'api unauthorized',
+                     'hint': '自动发布需要认证服务号权限,请手动发布草稿',
+                 },
+             ):
+            result = publisher.publish_article(
+                {
+                    'title': '测试标题',
+                    'author': '测试作者',
+                    'summary': '测试摘要',
+                    'content': '<p>测试正文</p>',
+                },
+                draft=True,
+            )
+
+        self.assertEqual(result['media_id'], 'draft-media-id')
+        self.assertFalse(result['auto_publish_succeeded'])
+        self.assertIn('publish_result', result)
+        self.assertIn('publish_error', result)
+        self.assertIn('api unauthorized', result['publish_error'])
+
 
 if __name__ == '__main__':
     unittest.main()

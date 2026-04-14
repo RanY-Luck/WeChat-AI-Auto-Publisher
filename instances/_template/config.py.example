@@ -1,34 +1,26 @@
-# 导入必要的模块
+# Copy this file to instances/<INSTANCE_SLUG>/config.py and fill your real values.
 import os
 
-# 获取方式: https://bailian.console.aliyun.com/
-# 阿里云百炼 (DashScope) 配置
-DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxx" # 请替换为您的真实 Key
-DASHSCOPE_MODEL = "qwen3.6-plus" # 或 qwen-max、qwen-plus
+DASHSCOPE_API_KEY = "sk-xxxxxxxxxxxxxxxxx"
+DASHSCOPE_MODEL = "qwen3.6-plus"
 
-# Bark App 中获取的 Key
 BARK_KEY = ""
-
-# imgbb 图床 API Key (可选，备用图床)
-# 获取方式: https://api.imgbb.com/
 IMGBB_API_KEY = ""
-IMGBB_EXPIRATION = 86400 # 一天后清理
+IMGBB_EXPIRATION = 86400
 
-# 微信公众号配置
 WECHAT_CONFIG = {
-    "app_id": "",  # 微信公众号AppID
-    "app_secret": "",  # 微信公众号AppSecret
+    "app_id": "",
+    "app_secret": "",
 }
 
-# 发布配置
 PUBLISH_CONFIG = {
-    "enable_schedule": False,   # 是否启用定时发布
-    "target_time": "20:00",    # 14:30 生成文案/草稿 (24小时制 HH:MM)
-    "timezone": 8,             # 时区 (UTC+8)
-    "article_template": "wechat_default",  # 公众号正文模板(空字符串表示关闭)
+    "enable_schedule": False,
+    "target_time": "20:00",
+    "timezone": 8,
+    "article_template": "wechat_default",
     "enable_web_publish": True,
-    "publish_time": "20:00",   # 20:00 自动发文
-    "login_check_hours_before": 2, # 提前 3 小时检查登录 -> 17:00
+    "publish_time": "20:00",
+    "login_check_hours_before": 2,
     "max_publish_retries": 3,
 }
 
@@ -38,8 +30,6 @@ WEB_PUBLISH_CONFIG = {
     "headless": False,
 }
 
-
-# 项目路径配置
 PROJECT_PATH = {
     "root": "F:\\pycharmProject\\mulagent",
     "input_pdfs": "F:\\pycharmProject\\mulagent\\input\\pdfs",
@@ -48,7 +38,6 @@ PROJECT_PATH = {
     "temp": "F:\\pycharmProject\\mulagent\\temp"
 }
 
-# Agent 配置
 AGENT_CONFIG = {
     "pdf_parser": {
         "timeout": 300,
@@ -57,7 +46,7 @@ AGENT_CONFIG = {
     },
     "text_scraper": {
         "timeout": 60,
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "user_agent": "Mozilla/5.0"
     },
     "image_scraper": {
         "timeout": 60,
@@ -78,7 +67,6 @@ AGENT_CONFIG = {
     }
 }
 
-# 日志配置
 LOGGING_CONFIG = {
     "level": "INFO",
     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -87,52 +75,47 @@ LOGGING_CONFIG = {
 
 
 class Config:
-    """配置类，提供统一的配置访问接口"""
     def __init__(self):
         self.DASHSCOPE_API_KEY = DASHSCOPE_API_KEY
         self.DASHSCOPE_MODEL = DASHSCOPE_MODEL
-        
         self.WECHAT_CONFIG = WECHAT_CONFIG
         self.PUBLISH_CONFIG = PUBLISH_CONFIG
-        self.BARK_KEY = globals().get('BARK_KEY') # 动态获取全局变量，防止未定义
+        self.BARK_KEY = globals().get("BARK_KEY")
         self.IMGBB_API_KEY = IMGBB_API_KEY
         self.IMGBB_EXPIRATION = IMGBB_EXPIRATION
         self.WEB_PUBLISH_CONFIG = WEB_PUBLISH_CONFIG
 
-        
-        # 项目路径配置
         self.ROOT_DIR = PROJECT_PATH["root"]
         self.INPUT_PDFS_DIR = PROJECT_PATH["input_pdfs"]
         self.OUTPUT_IMAGES_DIR = PROJECT_PATH["output_images"]
         self.OUTPUT_BLOGS_DIR = PROJECT_PATH["output_blogs"]
         self.TEMP_DIR = PROJECT_PATH["temp"]
-        
-        # Agent 配置
+
         self.PDF_PARSER_CONFIG = AGENT_CONFIG.get("pdf_parser", {})
         self.TEXT_SCRAPER_CONFIG = AGENT_CONFIG.get("text_scraper", {})
         self.IMAGE_SCRAPER_CONFIG = AGENT_CONFIG.get("image_scraper", {})
         self.BLOG_WRITER_CONFIG = AGENT_CONFIG.get("blog_writer", {})
         self.CONTENT_REFINER_CONFIG = AGENT_CONFIG.get("content_refiner", {})
         self.DIAGRAM_GENERATOR_CONFIG = AGENT_CONFIG.get("diagram_generator", {})
-        
-        # 日志配置
+
         self.LOG_DIR = "F:/pycharmProject/mulagent/logs"
         self.LOG_LEVEL = LOGGING_CONFIG.get("level", "INFO")
-        self.LOG_FORMAT = LOGGING_CONFIG.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        
-        # 创建必要的目录
+        self.LOG_FORMAT = LOGGING_CONFIG.get(
+            "format",
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
         self._create_directories()
-    
+
     def _create_directories(self):
-        """创建项目所需的目录"""
         directories = [
             self.LOG_DIR,
             self.INPUT_PDFS_DIR,
             self.OUTPUT_IMAGES_DIR,
             self.OUTPUT_BLOGS_DIR,
-            self.TEMP_DIR
+            self.TEMP_DIR,
         ]
-        
+
         for directory in directories:
             if not os.path.exists(directory):
                 os.makedirs(directory)

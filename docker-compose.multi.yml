@@ -1,0 +1,54 @@
+services:
+  wechat-foo:
+    container_name: wechat-publisher-foo
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wechat-ai-publisher:latest
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file:
+      - ./instances/foo/.env
+    environment:
+      TZ: Asia/Shanghai
+      VNC_PORT: 5900
+      NOVNC_PORT: 6080
+      SCREEN_WIDTH: 1920
+      SCREEN_HEIGHT: 1080
+      SCREEN_DEPTH: 24
+    ports:
+      - "16080:6080"
+      - "15900:5900"
+    volumes:
+      - ./instances/foo/config.py:/app/config/config.py:ro
+      - ./logs/foo:/app/logs
+      - wechat-profile-foo:/data/wechat-profile
+
+  wechat-bar:
+    container_name: wechat-publisher-bar
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wechat-ai-publisher:latest
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file:
+      - ./instances/bar/.env
+    environment:
+      TZ: Asia/Shanghai
+      VNC_PORT: 5900
+      NOVNC_PORT: 6080
+      SCREEN_WIDTH: 1920
+      SCREEN_HEIGHT: 1080
+      SCREEN_DEPTH: 24
+    ports:
+      - "16081:6080"
+      - "15901:5900"
+    volumes:
+      - ./instances/bar/config.py:/app/config/config.py:ro
+      - ./logs/bar:/app/logs
+      - wechat-profile-bar:/data/wechat-profile
+
+volumes:
+  wechat-profile-foo:
+  wechat-profile-bar:

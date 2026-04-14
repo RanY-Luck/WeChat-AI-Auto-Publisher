@@ -34,7 +34,6 @@ class SchedulerWebPublishConfigTest(unittest.TestCase):
         self.assertEqual(config.IMGBB_API_KEY, config_module.IMGBB_API_KEY)
         self.assertEqual(config.IMGBB_EXPIRATION, config_module.IMGBB_EXPIRATION)
         self.assertEqual(config.WEB_PUBLISH_CONFIG, config_module.WEB_PUBLISH_CONFIG)
-
         for key in expected_publish_keys:
             self.assertIn(key, config.PUBLISH_CONFIG)
             self.assertIn(key, config_module.PUBLISH_CONFIG)
@@ -59,7 +58,6 @@ class SchedulerWebPublishConfigTest(unittest.TestCase):
         self.assertEqual(example_web_publish_config["browser_profile_dir"], "/data/wechat-profile")
         self.assertEqual(example_web_publish_config["novnc_port"], 6080)
         self.assertFalse(example_web_publish_config["headless"])
-
 
 if __name__ == "__main__":
     unittest.main()

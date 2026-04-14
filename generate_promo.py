@@ -175,7 +175,24 @@ def main():
                 # 3. 发布
                 publish_result = publisher.publish_article(formatted_article, draft=True)
 
-                if publish_result:
+                if publish_result and publish_result.get("media_id"):
+                    if publish_result.get("auto_publish_succeeded") is False:
+                        publish_error = publish_result.get("publish_error", "未知错误")
+                        msg = f"草稿保存成功，但自动发布失败: {publish_error}"
+                        logger.error(msg)
+                        notifier.send(
+                            title="公众号草稿保存成功但自动发布失败",
+                            content=(
+                                f"标题: {result.get('title')}\n"
+                                f"草稿Media ID: {publish_result.get('media_id')}\n"
+                                f"错误: {publish_error}"
+                            ),
+                        )
+                    else:
+                        msg = f"✅ 发布成功! Media ID: {publish_result.get('media_id')}"
+                        logger.info(msg)
+                        notifier.send(title="公众号发布成功", content=f"标题: {result.get('title')}")
+                elif publish_result:
                     msg = f"✅ 发布成功! Media ID: {publish_result.get('media_id')}"
                     logger.info(msg)
                     notifier.send(title="公众号发布成功", content=f"标题: {result.get('title')}")
