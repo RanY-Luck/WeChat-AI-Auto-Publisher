@@ -37,6 +37,16 @@ WEIBO_HEADERS = {
 }
 
 
+def get_topic_candidate_limit(config):
+    publish_config = getattr(config, "PUBLISH_CONFIG", {}) or {}
+    topic_candidate_limit = _safe_int(
+        publish_config.get("hot_topic_candidate_limit"),
+        default=3,
+        minimum=1,
+    )
+    return topic_candidate_limit
+
+
 def extract_topics_from_weibo_html(html_text):
     """从微博热搜页面 HTML 提取话题列表"""
     matches = re.findall(r'<td class="td-02">[\s\S]*?<a[^>]*>([\s\S]*?)</a>', html_text)
@@ -50,6 +60,9 @@ def extract_topics_from_weibo_html(html_text):
 
 def get_topic_from_weibo_hot_search():
     """获取微博热搜话题，失败时返回 None"""
+    config = Config()
+    topic_candidate_limit = get_topic_candidate_limit(config)
+
     try:
         response = requests.get(
             "https://weibo.com/ajax/side/hotSearch",
@@ -66,6 +79,8 @@ def get_topic_from_weibo_hot_search():
             if word:
                 topics.append(word)
 
+        topics = topics[:topic_candidate_limit]
+
         if topics:
             topic = random.choice(topics)
             logger.info(f"微博热搜接口获取成功，候选数量: {len(topics)}，选中话题: {topic}")
@@ -77,12 +92,13 @@ def get_topic_from_weibo_hot_search():
 
     try:
         response = requests.get(
-            "https://s.weibo.com/top/summary?cate=socialevent",
+            "https://s.weibo.com/top/summary?cate=entrank",
             headers=WEIBO_HEADERS,
             timeout=10
         )
         response.raise_for_status()
         topics = extract_topics_from_weibo_html(response.text)
+        topics = topics[:topic_candidate_limit]
 
         if not topics:
             logger.warning("微博热搜页面解析为空")

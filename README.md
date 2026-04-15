@@ -63,6 +63,7 @@ PUBLISH_CONFIG = {
     "target_time": "20:00",
     "timezone": 8,
     "article_template": "wechat_default",
+    "hot_topic_candidate_limit": 3,
     "enable_web_publish": True,
     "publish_time": "20:00",
     "login_check_hours_before": 2,
@@ -90,6 +91,8 @@ WECHAT_PROFILE_VOLUME=wechat-profile-account-a
 VNC_PASSWORD=replace-with-a-strong-password
 AUTO_OPEN_BROWSER=true
 ```
+
+`hot_topic_candidate_limit` 表示只从微博热点前 N 条里挑选本次主题，默认建议填 `3`。
 
 ## 第二步：本地打包
 
