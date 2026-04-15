@@ -5,7 +5,6 @@ cd /d "%~dp0"
 
 set "RELEASE_DIR=%CD%\release"
 set "ZIP_PATH=%CD%\release.zip"
-set "IMAGE_NAME=wechat-ai-publisher:latest"
 set "TAR_PATH=%RELEASE_DIR%\wechat-ai-publisher.tar"
 
 echo [1/7] Checking required files...
@@ -26,17 +25,23 @@ if not exist "deploy_centos7.sh" (
     exit /b 1
 )
 
+set "IMAGE_NAME="
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if /I "%%~A"=="IMAGE_NAME" set "IMAGE_NAME=%%~B"
+)
+if not defined IMAGE_NAME set "IMAGE_NAME=wechat-ai-publisher:latest"
+
 echo [2/7] Preparing release directory...
 if exist "%RELEASE_DIR%" rmdir /s /q "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%\config"
 
 echo [3/7] Building Docker image...
-docker build -t wechat-ai-publisher:latest .
+docker build -t "%IMAGE_NAME%" .
 if errorlevel 1 exit /b 1
 
 echo [4/7] Saving image tar...
-docker save -o "%TAR_PATH%" %IMAGE_NAME%
+docker save -o "%TAR_PATH%" "%IMAGE_NAME%"
 if errorlevel 1 exit /b 1
 
 echo [5/7] Copying deployment files...
@@ -64,6 +69,7 @@ echo   - docker-compose.yml
 echo   - .env
 echo   - config\config.py
 echo   - deploy_centos7.sh
+echo   - IMAGE_NAME=%IMAGE_NAME%
 echo.
 echo Not included:
 echo   - wechat-profile

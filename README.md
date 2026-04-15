@@ -174,6 +174,7 @@ WEB_PUBLISH_CONFIG = {
 - `login_check_hours_before`：提前多少小时做登录检测
 - `article_template="wechat_default"` 时，会把 AI 正文塞进 `templates/wechat_default.html` 的 `{{content}}`
 - `browser_profile_dir` 需要与 Docker 挂载目录对应，才能保留微信登录态
+- `novnc_port` 应与 Docker 对外暴露的 noVNC 宿主机端口一致，否则 Bark / noVNC 提示地址会指向错误端口
 
 ### 5. 路径配置
 
@@ -381,7 +382,7 @@ python scheduler_app.py
 
 其中浏览器登录态目录固定为 `/data/wechat-profile`，必须持久化挂载。
 
-当前 `docker-compose.yml` 已默认使用 Docker named volume `wechat-profile-data` 持久化这个目录。
+当前 `docker-compose.yml` 会使用 `.env` 里的 `WECHAT_PROFILE_VOLUME` 作为 Docker named volume 名称来持久化这个目录。
 
 ### `wechat-profile` 是什么
 
@@ -422,11 +423,31 @@ mkdir -p logs
 其中：
 
 - 编辑 `.env`，至少填好 `VNC_PASSWORD`
+- 推荐同时确认 `COMPOSE_PROJECT_NAME`、`CONTAINER_NAME`、`IMAGE_NAME`、`HOST_NOVNC_PORT`、`HOST_VNC_PORT`、`WECHAT_PROFILE_VOLUME`
 - 直接使用仓库里的 `config/config.py`，写入你的真实业务配置
 
 示例：
 
 ```env
+COMPOSE_PROJECT_NAME=wechat-account-a
+CONTAINER_NAME=wechat-publisher-account-a
+IMAGE_NAME=wechat-ai-publisher:account-a
+HOST_NOVNC_PORT=6080
+HOST_VNC_PORT=5900
+WECHAT_PROFILE_VOLUME=wechat-profile-account-a
+VNC_PASSWORD=replace-with-a-strong-password
+AUTO_OPEN_BROWSER=true
+```
+
+如果你要在同一台服务器再部署另一个账号，请复制一套 release 目录，并把 `.env` 改成另一组名字和端口，例如：
+
+```env
+COMPOSE_PROJECT_NAME=wechat-account-b
+CONTAINER_NAME=wechat-publisher-account-b
+IMAGE_NAME=wechat-ai-publisher:account-b
+HOST_NOVNC_PORT=6081
+HOST_VNC_PORT=5901
+WECHAT_PROFILE_VOLUME=wechat-profile-account-b
 VNC_PASSWORD=replace-with-a-strong-password
 AUTO_OPEN_BROWSER=true
 ```
@@ -442,6 +463,8 @@ win系统运行:
 docker build -t wechat-ai-publisher:latest .
 docker save -o wechat-ai-publisher.tar wechat-ai-publisher:latest
 ```
+
+如果 `.env` 里改了 `IMAGE_NAME`，`build_release.bat` 会自动按该镜像名构建并导出；手工执行时也请把上面的镜像 tag 换成你的 `IMAGE_NAME`。
 
 ### 3. 组装 release 目录并上传服务器
 
@@ -462,7 +485,7 @@ release/
 
 - `logs/` 如果不存在，`docker compose up -d` 时会自动创建
 - 当前镜像不会包含你的真实 `config.py`，所以 `config/config.py` 必须跟 release 包一起上传
-- 登录态默认保存在 Docker volume `wechat-profile-data` 中，不需要把 `wechat-profile/` 目录打包上传
+- 登录态默认保存在 `.env` 指定的 Docker volume 中，不需要把 `wechat-profile/` 目录打包上传
 - 如果你确实想迁移本地登录态到服务器，需要额外改 compose，把 volume 改回 bind mount；这不是默认推荐路径
 
 ### 4. 服务器上直接 load + up
@@ -483,13 +506,13 @@ docker compose up -d
 
 - `AUTO_OPEN_BROWSER=true` 时，容器启动后会自动在 noVNC 里打开公众号登录页
 - 首次扫码登录完成后，请把这个 Chromium 窗口关闭，避免后续 Playwright 发布时遇到 profile lock
-- 后续不要删除 Docker volume `wechat-profile-data`，否则服务器会丢失登录态
+- 后续不要删除 `.env` 中的 `WECHAT_PROFILE_VOLUME` 对应 volume，否则服务器会丢失登录态
 
 ### 5. 如果你更习惯 `docker run`
 
 ```bash
 docker run -d \
-  --name wechat-publisher \
+  --name wechat-publisher-account-a \
   --restart unless-stopped \
   --shm-size=1g \
   -e VNC_PASSWORD='replace-with-a-strong-password' \
@@ -498,19 +521,21 @@ docker run -d \
   -p 5900:5900 \
   -v $(pwd)/config/config.py:/app/config/config.py:ro \
   -v $(pwd)/logs:/app/logs \
-  -v wechat-profile-data:/data/wechat-profile \
-  wechat-ai-publisher:latest
+  -v wechat-profile-account-a:/data/wechat-profile \
+  wechat-ai-publisher:account-a
 ```
 
 如果你使用 `docker run`，请先创建 volume：
 
 ```bash
-docker volume create wechat-profile-data
+docker volume create wechat-profile-account-a
 ```
+
+如果你要部署第二个账号，请至少同时改 `--name`、镜像 tag、宿主机端口和 volume 名。
 
 ### 6. 首次登录
 
-1. 打开 `http://<server-ip>:6080/vnc.html`
+1. 打开 `http://<server-ip>:<HOST_NOVNC_PORT>/vnc.html`
 2. 输入 `VNC_PASSWORD`
 3. 若开启了 `AUTO_OPEN_BROWSER=true`，会自动看到公众号登录页；否则手动启动浏览器访问 `https://mp.weixin.qq.com`
 4. 在 noVNC 里的浏览器中扫码登录公众号后台
@@ -548,10 +573,10 @@ PUBLISH_CONFIG = {
 
 ### 8. 运行时端口
 
-- `6080`：noVNC Web 页面，示例 `http://<server-ip>:6080/vnc.html`
-- `5900`：原生 VNC 端口，可选
+- `HOST_NOVNC_PORT`：noVNC Web 页面，示例 `http://<server-ip>:6080/vnc.html`
+- `HOST_VNC_PORT`：原生 VNC 端口，可选
 
-`6080` 和 `5900` 都不要直接裸露到公网。至少应放在防火墙白名单、VPN、堡垒机或反向代理访问控制之后。
+`HOST_NOVNC_PORT` 和 `HOST_VNC_PORT` 都不要直接裸露到公网。至少应放在防火墙白名单、VPN、堡垒机或反向代理访问控制之后。
 
 ### 9. 常用排查命令
 

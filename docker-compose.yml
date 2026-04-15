@@ -1,10 +1,10 @@
 services:
   wechat-publisher:
-    container_name: wechat-publisher
+    container_name: ${CONTAINER_NAME:-wechat-publisher}
     build:
       context: .
       dockerfile: Dockerfile
-    image: wechat-ai-publisher:latest
+    image: ${IMAGE_NAME:-wechat-ai-publisher:latest}
     restart: unless-stopped
     shm_size: "1gb"
     environment:
@@ -17,8 +17,8 @@ services:
       SCREEN_HEIGHT: 1080
       SCREEN_DEPTH: 24
     ports:
-      - "6080:6080"
-      - "5900:5900"
+      - "${HOST_NOVNC_PORT:-6080}:6080"
+      - "${HOST_VNC_PORT:-5900}:5900"
     volumes:
       - ./config/config.py:/app/config/config.py:ro
       - ./logs:/app/logs
@@ -26,3 +26,4 @@ services:
 
 volumes:
   wechat-profile-data:
+    name: ${WECHAT_PROFILE_VOLUME:-wechat-profile-data}

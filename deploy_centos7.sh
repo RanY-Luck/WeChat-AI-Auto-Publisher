@@ -3,11 +3,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-IMAGE_NAME="${IMAGE_NAME:-wechat-ai-publisher:latest}"
-TAR_PATH="${TAR_PATH:-./wechat-ai-publisher.tar}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-CONTAINER_NAME="${CONTAINER_NAME:-wechat-publisher}"
-
 need_file() {
     local path="$1"
     if [ ! -f "$path" ]; then
@@ -34,9 +29,29 @@ resolve_compose_cmd() {
     exit 1
 }
 
+load_env_file() {
+    local env_file="$1"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in
+            ""|\#*)
+                continue
+                ;;
+        esac
+        export "$line"
+    done < "$env_file"
+}
+
+need_file ".env"
+load_env_file ".env"
+
+IMAGE_NAME="${IMAGE_NAME:-wechat-ai-publisher:latest}"
+TAR_PATH="${TAR_PATH:-./wechat-ai-publisher.tar}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+CONTAINER_NAME="${CONTAINER_NAME:-wechat-publisher}"
+
 need_file "$TAR_PATH"
 need_file "$COMPOSE_FILE"
-need_file ".env"
 need_file "config/config.py"
 
 COMPOSE_CMD="$(resolve_compose_cmd)"
@@ -49,7 +64,7 @@ echo "[2/4] Removing existing image..."
 docker image rm -f "$IMAGE_NAME" >/dev/null 2>&1 || true
 
 echo "[3/4] Loading image tar..."
-docker load -i wechat-ai-publisher.tar
+docker load -i "$TAR_PATH"
 
 echo "[4/4] Starting deployment..."
 $COMPOSE_CMD up -d
