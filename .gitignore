@@ -58,3 +58,4 @@ config/config.py
 *.zip
 release/
 wechat-profile/
+.worktrees/
