@@ -192,6 +192,84 @@ def _safe_int(value, default, minimum=None):
     return parsed
 
 
+def _minute_to_hhmm(minute_of_day):
+    return f"{minute_of_day // 60:02d}:{minute_of_day % 60:02d}"
+
+
+def generate_random_daily_times(daily_random_runs_max, random_module=None):
+    random_module = random_module or random
+    max_runs = _safe_int(daily_random_runs_max, default=1, minimum=1)
+    run_count = random_module.randint(1, max_runs)
+    minutes = sorted(random_module.sample(range(24 * 60), run_count))
+    return [_minute_to_hhmm(minute_of_day) for minute_of_day in minutes]
+
+
+def filter_future_times_for_today(plan_date, times, now=None):
+    now = now or datetime.now()
+    if plan_date != now.date():
+        return list(times)
+    current_time = now.strftime("%H:%M")
+    return [time_text for time_text in times if time_text > current_time]
+
+
+def _cancel_scheduled_job(scheduler_module, job_ref):
+    if job_ref is None:
+        return
+    cancel_job = getattr(scheduler_module, "cancel_job", None)
+    if callable(cancel_job):
+        cancel_job(job_ref)
+        return
+    if hasattr(job_ref, "cancel"):
+        job_ref.cancel()
+
+
+def register_random_daily_jobs(scheduler_module, times, draft_job_callable):
+    registered_jobs = []
+    for target_time in times:
+        job_ref = scheduler_module.every().day.at(target_time).do(draft_job_callable)
+        registered_jobs.append(job_ref)
+    return registered_jobs
+
+
+def refresh_random_daily_plan(
+    state,
+    scheduler_module,
+    draft_job_callable,
+    daily_random_runs_max,
+    now_provider=None,
+    random_module=None,
+):
+    now_provider = now_provider or datetime.now
+    now = now_provider()
+    current_date = now.date()
+
+    if state.get("plan_date") == current_date:
+        return state
+
+    for job_ref in state.get("registered_job_refs", []):
+        _cancel_scheduled_job(scheduler_module, job_ref)
+
+    generated_times = generate_random_daily_times(
+        daily_random_runs_max=daily_random_runs_max,
+        random_module=random_module,
+    )
+    target_times = filter_future_times_for_today(
+        plan_date=current_date,
+        times=generated_times,
+        now=now,
+    )
+    registered_job_refs = register_random_daily_jobs(
+        scheduler_module=scheduler_module,
+        times=target_times,
+        draft_job_callable=draft_job_callable,
+    )
+    state["plan_date"] = current_date
+    state["times"] = target_times
+    state["registered_job_refs"] = registered_job_refs
+    logger.info(f"随机日计划已刷新 {current_date}: {', '.join(target_times) or '今天无剩余时段'}")
+    return state
+
+
 def _is_profile_in_use_error(error):
     error_text = str(error or "")
     return "ProcessSingleton" in error_text or "profile directory" in error_text
@@ -335,7 +413,7 @@ def job():
         if not result:
             logger.error("文案生成失败")
             notifier.send(title="定时任务失败", content="文案生成失败，请检查日志")
-            return
+            return False
 
         logger.info(f"文案生成成功: {result.get('title')}")
 
@@ -345,7 +423,7 @@ def job():
 
         if not cover_path:
             logger.error("封面生成失败")
-            return
+            return False
 
         # 3. 格式化
         article_template = (config.PUBLISH_CONFIG.get("article_template") or "").strip()
@@ -367,7 +445,8 @@ def job():
         # 4. 发布到草稿箱
         publish_result = publisher.publish_article(formatted_article, draft=True)
 
-        if publish_result:
+        success = bool(publish_result)
+        if success:
             msg = f"✅ 定时发布成功! Media ID: {publish_result.get('media_id')}"
             logger.info(msg)
             notifier.send(title="定时发布成功", content=f"主题: {topic}\n标题: {result.get('title')}")
@@ -379,10 +458,12 @@ def job():
         # 清理
         if os.path.exists(cover_path):
             os.remove(cover_path)
+        return success
 
     except Exception as e:
         logger.error(f"定时任务执行异常: {e}")
         notifier.send(title="定时任务异常", content=f"错误: {str(e)}")
+        return False
 
 
 def _notify_login_required(config, notifier, web_publisher, page, uploader=None):
@@ -447,6 +528,8 @@ def schedule_jobs(
     notifier_factory=None,
     web_publisher_factory=None,
     uploader_factory=None,
+    now_provider=None,
+    random_module=None,
 ):
     config = config or Config()
     publish_config = config.PUBLISH_CONFIG or {}
@@ -455,12 +538,61 @@ def schedule_jobs(
     publish_latest_draft_job_callable = (
         publish_latest_draft_job_callable or publish_latest_draft_job
     )
+    now_provider = now_provider or datetime.now
+
+    if publish_config.get("random_daily_schedule_enabled"):
+        random_schedule_state = {}
+
+        def run_random_full_workflow():
+            draft_success = draft_job_callable()
+            if not draft_success:
+                return False
+            if not publish_config.get("enable_web_publish"):
+                return True
+            notifier = notifier_factory() if notifier_factory else None
+            return publish_latest_draft_job_callable(
+                config=config,
+                notifier=notifier,
+                web_publisher_factory=web_publisher_factory,
+                uploader_factory=uploader_factory,
+            )
+
+        refresh_random_daily_plan(
+            state=random_schedule_state,
+            scheduler_module=scheduler_module,
+            draft_job_callable=run_random_full_workflow,
+            daily_random_runs_max=publish_config.get("daily_random_runs_max"),
+            now_provider=now_provider,
+            random_module=random_module,
+        )
+
+        def ensure_random_daily_plan():
+            return refresh_random_daily_plan(
+                state=random_schedule_state,
+                scheduler_module=scheduler_module,
+                draft_job_callable=run_random_full_workflow,
+                daily_random_runs_max=publish_config.get("daily_random_runs_max"),
+                now_provider=now_provider,
+                random_module=random_module,
+            )
+
+        scheduler_module.every(10).minutes.do(ensure_random_daily_plan)
+        return {
+            "schedule_mode": "random_daily",
+            "target_time": None,
+            "target_times": random_schedule_state.get("times", []),
+            "web_publish_enabled": bool(publish_config.get("enable_web_publish")),
+            "publish_time": None,
+            "precheck_time": None,
+        }
 
     target_time = (publish_config.get("target_time") or "14:30").strip()
     scheduler_module.every().day.at(target_time).do(draft_job_callable)
 
     schedule_info = {
+        "schedule_mode": "fixed",
         "target_time": target_time,
+        "target_times": [target_time],
         "web_publish_enabled": bool(publish_config.get("enable_web_publish")),
         "publish_time": None,
         "precheck_time": None,
@@ -519,8 +651,17 @@ def main(argv=None):
     schedule_info = schedule_jobs(config=config)
     target_time = schedule_info["target_time"]
 
-    logger.info(f"🚀 发帖机器人已启动！将在每天 {target_time} 自动生成并保存草稿。")
-    if schedule_info["web_publish_enabled"]:
+    if schedule_info.get("schedule_mode") == "random_daily":
+        target_times = schedule_info.get("target_times", [])
+        logger.info(
+            f"🚀 发帖机器人已启动！今天随机计划执行 {len(target_times)} 次: "
+            f"{', '.join(target_times) or '今天无剩余时段'}"
+        )
+        if schedule_info["web_publish_enabled"]:
+            logger.info("🌐 微信 UI 发布已启用，随机模式下每次任务生成草稿后会立即尝试自动发布。")
+    else:
+        logger.info(f"🚀 发帖机器人已启动！将在每天 {target_time} 自动生成并保存草稿。")
+    if schedule_info["web_publish_enabled"] and schedule_info.get("schedule_mode") != "random_daily":
         logger.info(
             f"🌐 微信 UI 发布已启用，登录预检查时间: {schedule_info['precheck_time']}，"
             f"发布时间: {schedule_info['publish_time']}"
@@ -528,7 +669,16 @@ def main(argv=None):
     logger.info("正在等待时间到达... (按 Ctrl+C 退出)")
 
     # 启动时先发个 Bark 确认存活
-    BarkNotifier().send(title="服务启动", content=f"自动发文服务已在服务器启动\n每天 {target_time} 生成草稿")
+    if schedule_info.get("schedule_mode") == "random_daily":
+        BarkNotifier().send(
+            title="服务启动",
+            content=(
+                "自动发文服务已在服务器启动\n"
+                f"今天随机计划: {', '.join(schedule_info.get('target_times', [])) or '今天无剩余时段'}"
+            ),
+        )
+    else:
+        BarkNotifier().send(title="服务启动", content=f"自动发文服务已在服务器启动\n每天 {target_time} 生成草稿")
     run_startup_login_precheck(config=config)
 
     while True:

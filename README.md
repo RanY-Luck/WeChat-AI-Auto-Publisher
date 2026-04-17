@@ -64,6 +64,8 @@ PUBLISH_CONFIG = {
     "timezone": 8,
     "article_template": "wechat_default",
     "hot_topic_candidate_limit": 3,
+    "random_daily_schedule_enabled": False,
+    "daily_random_runs_max": 3,
     "enable_web_publish": True,
     "publish_time": "20:00",
     "login_check_hours_before": 2,
@@ -93,6 +95,20 @@ AUTO_OPEN_BROWSER=true
 ```
 
 `hot_topic_candidate_limit` 表示只从微博热点前 N 条里挑选本次主题，默认建议填 `3`。
+
+如果你想改成“每天随机发 1~N 次完整流程”，把下面两个字段打开：
+
+```python
+PUBLISH_CONFIG = {
+    "enable_schedule": True,
+    "random_daily_schedule_enabled": True,
+    "daily_random_runs_max": 5,
+    "hot_topic_candidate_limit": 3,
+    "enable_web_publish": True,
+}
+```
+
+启用后，系统会在 `00:00-23:59` 之间每天随机生成 `1~N` 个执行时间点；每次都会走完整流程：选题、生成内容、存草稿、自动发布。热点规则仍然是“微博前 3 个热点里随机选 1 个”。
 
 ## 第二步：本地打包
 
