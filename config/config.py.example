@@ -27,11 +27,12 @@ PUBLISH_CONFIG = {
     "timezone": 8,             # 时区 (UTC+8)
     "article_template": "wechat_default",  # 公众号正文模板(空字符串表示关闭)
     "hot_topic_candidate_limit": 3,  # 只从微博热点前 N 条里选题
-    "random_daily_schedule_enabled": False,  # 是否启用每天随机 1~N 次完整流程
-    "daily_random_runs_max": 3,  # 随机模式下每天最多执行 N 次，实际为 1~N 次
-    "enable_web_publish": True,
-    "publish_time": "20:00",   # UI web publish time shown in scheduler
-    "login_check_hours_before": 2,
+    "random_daily_schedule_enabled": False,  # 是否启用每天随机 min~max 次完整流程
+    "daily_random_runs_min": 3,  # 随机模式下每天最少执行 N 次；min=max 时表示固定条数
+    "daily_random_runs_max": 5,  # 随机模式下每天最多执行 N 次；min=max 时表示固定条数
+    "enable_web_publish": True,  # 生成了草稿就立马发布
+    "publish_time": "20:00",   # 固定时刻模式下的自动发布时间 (随机模式开启时仅作兼容保留)
+    "login_check_hours_before": 2, # 固定时刻模式下提前 x 小时检查登录
     "max_publish_retries": 3,
 }
 

@@ -196,10 +196,24 @@ def _minute_to_hhmm(minute_of_day):
     return f"{minute_of_day // 60:02d}:{minute_of_day % 60:02d}"
 
 
-def generate_random_daily_times(daily_random_runs_max, random_module=None):
+def _resolve_random_daily_run_bounds(daily_random_runs_min=None, daily_random_runs_max=None):
+    min_runs = _safe_int(daily_random_runs_min, default=1, minimum=1)
+    max_runs = _safe_int(daily_random_runs_max, default=min_runs, minimum=1)
+    max_runs = max(max_runs, min_runs)
+    return min_runs, max_runs
+
+
+def generate_random_daily_times(
+    daily_random_runs_min=None,
+    daily_random_runs_max=None,
+    random_module=None,
+):
     random_module = random_module or random
-    max_runs = _safe_int(daily_random_runs_max, default=1, minimum=1)
-    run_count = random_module.randint(1, max_runs)
+    min_runs, max_runs = _resolve_random_daily_run_bounds(
+        daily_random_runs_min=daily_random_runs_min,
+        daily_random_runs_max=daily_random_runs_max,
+    )
+    run_count = random_module.randint(min_runs, max_runs)
     minutes = sorted(random_module.sample(range(24 * 60), run_count))
     return [_minute_to_hhmm(minute_of_day) for minute_of_day in minutes]
 
@@ -231,11 +245,84 @@ def register_random_daily_jobs(scheduler_module, times, draft_job_callable):
     return registered_jobs
 
 
+def _clear_login_wait_state(state):
+    wait_session = state.get("login_wait_session") or {}
+    web_publisher = wait_session.get("web_publisher")
+    if web_publisher is not None:
+        try:
+            web_publisher.close()
+        except Exception as close_error:
+            logger.warning(f"关闭等待登录浏览器失败: {close_error}")
+    state["waiting_for_login"] = False
+    state["login_wait_session"] = None
+
+
+def ensure_logged_in_or_start_wait(
+    state,
+    config=None,
+    notifier=None,
+    web_publisher_factory=None,
+    uploader_factory=None,
+):
+    config = config or Config()
+    notifier = notifier or BarkNotifier()
+    web_publisher_factory = web_publisher_factory or create_web_publisher
+    uploader_factory = uploader_factory or create_imgbb_uploader
+
+    wait_session = state.get("login_wait_session")
+    if wait_session:
+        web_publisher = wait_session["web_publisher"]
+        page = wait_session["page"]
+        if web_publisher.is_logged_in(page):
+            logger.info("检测到公众号已登录，结束等待状态")
+            _clear_login_wait_state(state)
+            return True
+        return None
+
+    web_publisher = web_publisher_factory(config)
+    uploader = uploader_factory(config)
+    try:
+        context = web_publisher.launch_persistent_context()
+        page = _resolve_page(context)
+        _open_login_page(page, web_publisher)
+
+        if web_publisher.is_logged_in(page):
+            web_publisher.close()
+            return True
+
+        _notify_login_required(
+            config=config,
+            notifier=notifier,
+            web_publisher=web_publisher,
+            page=page,
+            uploader=uploader,
+        )
+        state["waiting_for_login"] = True
+        state["login_wait_session"] = {
+            "web_publisher": web_publisher,
+            "page": page,
+        }
+        logger.info("公众号未登录，当前随机任务进入等待登录状态")
+        return None
+    except Exception as e:
+        if _is_profile_in_use_error(e):
+            logger.warning(f"等待登录时检测到浏览器 profile 占用: {e}")
+            return _notify_profile_in_use(config, notifier, "等待登录")
+        logger.error(f"等待登录任务异常: {e}")
+        notifier.send(title="微信登录等待异常", content=f"错误: {e}")
+        try:
+            web_publisher.close()
+        except Exception:
+            pass
+        return False
+
+
 def refresh_random_daily_plan(
     state,
     scheduler_module,
     draft_job_callable,
     daily_random_runs_max,
+    daily_random_runs_min=None,
     now_provider=None,
     random_module=None,
 ):
@@ -250,6 +337,7 @@ def refresh_random_daily_plan(
         _cancel_scheduled_job(scheduler_module, job_ref)
 
     generated_times = generate_random_daily_times(
+        daily_random_runs_min=daily_random_runs_min,
         daily_random_runs_max=daily_random_runs_max,
         random_module=random_module,
     )
@@ -543,13 +631,12 @@ def schedule_jobs(
     if publish_config.get("random_daily_schedule_enabled"):
         random_schedule_state = {}
 
-        def run_random_full_workflow():
+        def execute_random_full_workflow(notifier):
             draft_success = draft_job_callable()
             if not draft_success:
                 return False
             if not publish_config.get("enable_web_publish"):
                 return True
-            notifier = notifier_factory() if notifier_factory else None
             return publish_latest_draft_job_callable(
                 config=config,
                 notifier=notifier,
@@ -557,10 +644,47 @@ def schedule_jobs(
                 uploader_factory=uploader_factory,
             )
 
+        def run_random_full_workflow():
+            if random_schedule_state.get("waiting_for_login"):
+                logger.info("随机任务到达，但当前仍在等待登录，跳过本次任务")
+                return False
+
+            notifier = notifier_factory() if notifier_factory else BarkNotifier()
+            if publish_config.get("enable_web_publish"):
+                login_ready = ensure_logged_in_or_start_wait(
+                    state=random_schedule_state,
+                    config=config,
+                    notifier=notifier,
+                    web_publisher_factory=web_publisher_factory,
+                    uploader_factory=uploader_factory,
+                )
+                if login_ready is not True:
+                    return False
+
+            return execute_random_full_workflow(notifier)
+
+        def resume_waiting_random_full_workflow():
+            if not random_schedule_state.get("waiting_for_login"):
+                return None
+
+            notifier = notifier_factory() if notifier_factory else BarkNotifier()
+            login_ready = ensure_logged_in_or_start_wait(
+                state=random_schedule_state,
+                config=config,
+                notifier=notifier,
+                web_publisher_factory=web_publisher_factory,
+                uploader_factory=uploader_factory,
+            )
+            if login_ready is True:
+                logger.info("检测到公众号已登录，继续执行挂起的随机任务")
+                return execute_random_full_workflow(notifier)
+            return False
+
         refresh_random_daily_plan(
             state=random_schedule_state,
             scheduler_module=scheduler_module,
             draft_job_callable=run_random_full_workflow,
+            daily_random_runs_min=publish_config.get("daily_random_runs_min"),
             daily_random_runs_max=publish_config.get("daily_random_runs_max"),
             now_provider=now_provider,
             random_module=random_module,
@@ -571,11 +695,13 @@ def schedule_jobs(
                 state=random_schedule_state,
                 scheduler_module=scheduler_module,
                 draft_job_callable=run_random_full_workflow,
+                daily_random_runs_min=publish_config.get("daily_random_runs_min"),
                 daily_random_runs_max=publish_config.get("daily_random_runs_max"),
                 now_provider=now_provider,
                 random_module=random_module,
             )
 
+        scheduler_module.every(1).minutes.do(resume_waiting_random_full_workflow)
         scheduler_module.every(10).minutes.do(ensure_random_daily_plan)
         return {
             "schedule_mode": "random_daily",
@@ -688,3 +814,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

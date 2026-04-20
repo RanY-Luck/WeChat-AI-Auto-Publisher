@@ -73,6 +73,8 @@ class WeChatWebPublisher:
             context.close()
         if runtime is not None and hasattr(runtime, "stop"):
             runtime.stop()
+        if self._has_active_profile_process():
+            self._terminate_profile_processes()
 
     def is_logged_in(self, page):
         if self._is_authenticated_url(getattr(page, "url", "")):

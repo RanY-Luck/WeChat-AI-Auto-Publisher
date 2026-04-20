@@ -60,15 +60,16 @@ IMGBB_API_KEY = "你的 imgbb API Key"
 
 PUBLISH_CONFIG = {
     "enable_schedule": True,
-    "target_time": "20:00",
+    "target_time": "19:50",
     "timezone": 8,
     "article_template": "wechat_default",
     "hot_topic_candidate_limit": 3,
-    "random_daily_schedule_enabled": False,
-    "daily_random_runs_max": 3,
+    "random_daily_schedule_enabled": True,
+    "daily_random_runs_min": 5,
+    "daily_random_runs_max": 5,
     "enable_web_publish": True,
     "publish_time": "20:00",
-    "login_check_hours_before": 2,
+    "login_check_hours_before": 3,
     "max_publish_retries": 3,
 }
 
@@ -96,19 +97,46 @@ AUTO_OPEN_BROWSER=true
 
 `hot_topic_candidate_limit` 表示只从微博热点前 N 条里挑选本次主题，默认建议填 `3`。
 
-如果你想改成“每天随机发 1~N 次完整流程”，把下面两个字段打开：
+当前推荐模式支持“每天随机发 min~max 次完整流程”，如果你把 `min=max`，那就是固定条数：
 
 ```python
 PUBLISH_CONFIG = {
     "enable_schedule": True,
     "random_daily_schedule_enabled": True,
+    "daily_random_runs_min": 5,
     "daily_random_runs_max": 5,
     "hot_topic_candidate_limit": 3,
     "enable_web_publish": True,
 }
 ```
 
-启用后，系统会在 `00:00-23:59` 之间每天随机生成 `1~N` 个执行时间点；每次都会走完整流程：选题、生成内容、存草稿、自动发布。热点规则仍然是“微博前 3 个热点里随机选 1 个”。
+启用后，系统会在 `00:00-23:59` 之间每天随机生成 `min~max` 个执行时间点；每次都会走完整流程：选题、生成内容、存草稿、自动发布。热点规则仍然是“微博前 3 个热点里随机选 1 个”。
+
+登录行为补充：
+
+- 如果随机任务开始时检测到公众号后台未登录，程序会保留登录页并进入等待状态，不会立刻放弃当前任务
+- Bark 只提醒 1 次，后续静默等待你扫码登录
+- 你扫码成功后，程序会继续执行当前这一次挂起的随机任务
+- 等待登录期间如果新的随机任务时间到了，新的那次会直接跳过，不排队补跑
+
+如果你想退回旧的固定时刻模式，把这几个字段改掉：
+
+```python
+PUBLISH_CONFIG = {
+    "random_daily_schedule_enabled": False,
+    "target_time": "19:50",
+    "publish_time": "20:00",
+}
+```
+
+补充说明：
+
+- `daily_random_runs_min=3`、`daily_random_runs_max=5` 表示系统每天会随机执行 `3~5` 次
+- `daily_random_runs_min=5`、`daily_random_runs_max=5` 表示系统每天固定执行 `5` 次
+- `target_time` 和 `publish_time` 在随机模式下不会作为当天固定触发时刻使用，只保留给兼容旧模式
+- `login_check_hours_before` 也只在固定时刻模式下有意义
+- `enable_web_publish=True` 时，每次随机任务生成草稿后会立即继续自动发布
+- 如果当前正处于“等待扫码登录”状态，新的随机任务会直接跳过
 
 ## 第二步：本地打包
 
@@ -167,6 +195,10 @@ http://<服务器IP>:<HOST_NOVNC_PORT>/vnc.html
 3. 登录成功后关闭 noVNC 里的 Chromium 窗口
 
 后续系统会复用 `/data/wechat-profile` 中的登录态。
+
+## 启动后的行为
+
+服务启动后，日志和 Bark 通知会直接输出“今天随机计划执行几次、对应时间点是什么”。每天跨日后，系统会自动生成新一天的随机计划，不需要重启容器。
 
 
 如果服务器上临时处理：
