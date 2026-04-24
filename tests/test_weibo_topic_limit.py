@@ -13,7 +13,7 @@ class WeiboTopicLimitTests(unittest.TestCase):
         self.assertIn('hot_topic_candidate_limit', config_example_text)
         self.assertIn('topic_candidate_limit = _safe_int(', script_text)
         self.assertIn('publish_config.get("hot_topic_candidate_limit")', script_text)
-        self.assertIn('topics = topics[:topic_candidate_limit]', script_text)
+        self.assertIn('topic_candidates = [item for item in topic_candidates if item][:topic_candidate_limit]', script_text)
 
 
 if __name__ == "__main__":

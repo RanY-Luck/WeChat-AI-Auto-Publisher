@@ -27,6 +27,8 @@ PUBLISH_CONFIG = {
     "timezone": 8,             # 时区 (UTC+8)
     "article_template": "wechat_default",  # 公众号正文模板(空字符串表示关闭)
     "hot_topic_candidate_limit": 3,  # 只从微博热点前 N 条里选题
+    "discussion_title_enabled": False,  # 是否强制使用“发现中国有一个奇怪的现象：xxx”标题模板
+    "discussion_cover_pool_dir": "/app/cover_pool",  # Docker 默认把项目根目录 ./cover_pool 挂载到这里；把封面图放进仓库根目录 cover_pool/
     "random_daily_schedule_enabled": False,  # 是否启用每天随机 min~max 次完整流程
     "daily_random_runs_min": 3,  # 随机模式下每天最少执行 N 次；min=max 时表示固定条数
     "daily_random_runs_max": 5,  # 随机模式下每天最多执行 N 次；min=max 时表示固定条数

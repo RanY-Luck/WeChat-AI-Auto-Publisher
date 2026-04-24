@@ -35,6 +35,7 @@ echo [2/7] Preparing release directory...
 if exist "%RELEASE_DIR%" rmdir /s /q "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%"
 mkdir "%RELEASE_DIR%\config"
+mkdir "%RELEASE_DIR%\cover_pool"
 
 echo [3/7] Building Docker image...
 docker build -t "%IMAGE_NAME%" .
@@ -53,6 +54,8 @@ copy /y "config\config.py" "%RELEASE_DIR%\config\config.py" >nul
 if errorlevel 1 exit /b 1
 copy /y "deploy_centos7.sh" "%RELEASE_DIR%\deploy_centos7.sh" >nul
 if errorlevel 1 exit /b 1
+if exist "cover_pool" xcopy /e /i /y "cover_pool" "%RELEASE_DIR%\cover_pool" >nul
+if errorlevel 1 exit /b 1
 
 echo [6/7] Creating release.zip...
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%"
@@ -69,6 +72,7 @@ echo   - docker-compose.yml
 echo   - .env
 echo   - config\config.py
 echo   - deploy_centos7.sh
+echo   - cover_pool\*
 echo   - IMAGE_NAME=%IMAGE_NAME%
 echo.
 echo Not included:

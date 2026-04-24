@@ -22,6 +22,8 @@ services:
     volumes:
       - ./config/config.py:/app/config/config.py:ro
       - ./logs:/app/logs
+      # 把封面素材放到项目根目录的 cover_pool/ 目录，容器里会映射到 /app/cover_pool
+      - ./cover_pool:/app/cover_pool:ro
       - wechat-profile-data:/data/wechat-profile
 
 volumes:

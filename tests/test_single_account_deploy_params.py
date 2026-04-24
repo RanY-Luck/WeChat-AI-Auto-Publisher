@@ -38,6 +38,13 @@ class SingleAccountDeployParamsTests(unittest.TestCase):
         self.assertIn('docker build -t "%IMAGE_NAME%" .', script_text)
         self.assertIn('docker save -o "%TAR_PATH%" "%IMAGE_NAME%"', script_text)
 
+    def test_build_release_script_includes_cover_pool_assets(self):
+        script_text = (ROOT / "build_release.bat").read_text(encoding="utf-8")
+
+        self.assertIn('mkdir "%RELEASE_DIR%\\cover_pool"', script_text)
+        self.assertIn('if exist "cover_pool" xcopy /e /i /y "cover_pool" "%RELEASE_DIR%\\cover_pool" >nul', script_text)
+        self.assertIn('echo   - cover_pool\\*', script_text)
+
     def test_deploy_script_loads_env_and_uses_resolved_names(self):
         script_text = (ROOT / "deploy_centos7.sh").read_text(encoding="utf-8")
 

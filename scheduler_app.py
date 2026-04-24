@@ -4,9 +4,12 @@ import time
 import random
 import os
 import re
+import shutil
 import requests
 from datetime import datetime, timedelta
 from html import unescape
+from io import BytesIO
+from pathlib import Path
 from utils.promo_generator import PromoGenerator
 from utils.wechat_publisher import WeChatPublisher
 from utils.bark_notifier import BarkNotifier
@@ -14,7 +17,7 @@ from utils.imgbb_uploader import ImgbbUploader
 from utils.logger import setup_logger
 from utils.wechat_web_publisher import WeChatWebPublisher
 from config.config import Config
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # 设置日志
 logger = setup_logger("scheduler_app")
@@ -33,8 +36,9 @@ WEIBO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
     "Accept": "application/json, text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Referer": "https://s.weibo.com/top/summary?cate=realtimehot"
+    "Referer": "https://s.weibo.com/top/summary?cate=socialevent"
 }
+WEIBO_SOCIALEVENT_URL = "https://s.weibo.com/top/summary?cate=socialevent"
 
 
 def get_topic_candidate_limit(config):
@@ -58,75 +62,383 @@ def extract_topics_from_weibo_html(html_text):
     return topics
 
 
-def get_topic_from_weibo_hot_search():
-    """获取微博热搜话题，失败时返回 None"""
+def _is_weibo_visitor_response(html_text, response_url=""):
+    html_text = html_text or ""
+    response_url = response_url or ""
+    return (
+        "passport.weibo.com/visitor/visitor" in response_url
+        or "Sina Visitor System" in html_text
+        or "passport.weibo.com/visitor/visitor" in html_text
+    )
+
+
+def _detect_chromium_executable():
+    for command in ("chromium", "chromium-browser"):
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+    return None
+
+
+def fetch_weibo_socialevent_html_via_browser(timeout_ms=15000, wait_after_load_ms=5000):
+    runtime = None
+    browser = None
+    try:
+        from playwright.sync_api import sync_playwright
+
+        runtime = sync_playwright().start()
+        launch_kwargs = {
+            "headless": True,
+            "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+        }
+        executable_path = _detect_chromium_executable()
+        if executable_path:
+            launch_kwargs["executable_path"] = executable_path
+        browser = runtime.chromium.launch(**launch_kwargs)
+        page = browser.new_page()
+        page.goto(WEIBO_SOCIALEVENT_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+        page.wait_for_timeout(wait_after_load_ms)
+        return page.content()
+    except Exception as e:
+        logger.warning(f"微博社会事件浏览器抓取失败: {e}")
+        return ""
+    finally:
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        if runtime is not None:
+            try:
+                runtime.stop()
+            except Exception:
+                pass
+
+
+def extract_hot_topic_cover_url(item):
+    """从热点对象里提取可直接使用的封面图 URL。"""
+    if not isinstance(item, dict):
+        return None
+
+    candidate_keys = [
+        "cover_image_url",
+        "cover",
+        "image_url",
+        "image",
+        "pic_url",
+        "pic",
+        "thumbnail_url",
+        "thumbnail",
+        "large_url",
+        "large",
+    ]
+
+    for key in candidate_keys:
+        candidate = (item.get(key) or "").strip()
+        if not candidate:
+            continue
+        if "moter/flags" in candidate or "flags/" in candidate:
+            continue
+        return candidate
+
+    icon_url = (item.get("icon") or "").strip()
+    icon_width = _safe_int(item.get("icon_width"), default=0, minimum=0)
+    icon_height = _safe_int(item.get("icon_height"), default=0, minimum=0)
+    if (
+        icon_url
+        and "moter/flags" not in icon_url
+        and icon_width >= 200
+        and icon_height >= 120
+    ):
+        return icon_url
+
+    return None
+
+
+def _build_topic_info(topic_text, cover_image_url=None, source="weibo"):
+    topic_text = (topic_text or "").strip()
+    if not topic_text:
+        return None
+    return {
+        "title": topic_text,
+        "cover_image_url": (cover_image_url or "").strip() or None,
+        "source": source,
+    }
+
+
+def _normalize_cover_image_url(image_url):
+    image_url = (image_url or "").strip()
+    if image_url.startswith("//"):
+        return f"https:{image_url}"
+    return image_url
+
+
+def build_discussion_title(topic_text):
+    topic_text = re.sub(r"[!！?？,，.。:：;；、\s]+$", "", (topic_text or "").strip())
+    if not topic_text:
+        topic_text = "今天的关系难题"
+    return f"发现中国有一个奇怪的现象：{topic_text}"
+
+
+def get_hot_topic_from_weibo_hot_search():
+    """获取微博社会事件话题详情，失败时返回 None。"""
     config = Config()
     topic_candidate_limit = get_topic_candidate_limit(config)
 
     try:
         response = requests.get(
-            "https://weibo.com/ajax/side/hotSearch",
+            WEIBO_SOCIALEVENT_URL,
             headers=WEIBO_HEADERS,
             timeout=10
         )
         response.raise_for_status()
-        data = response.json()
-        realtime_list = data.get("data", {}).get("realtime", [])
+        html_text = response.text
+        if _is_weibo_visitor_response(html_text, getattr(response, "url", "")):
+            logger.info("微博社会事件请求命中 visitor 页面，改用浏览器抓取")
+            html_text = fetch_weibo_socialevent_html_via_browser()
 
-        topics = []
-        for item in realtime_list:
-            word = (item.get("word") or item.get("word_scheme") or "").strip()
-            if word:
-                topics.append(word)
+        topics = extract_topics_from_weibo_html(html_text)
+        topic_candidates = [
+            _build_topic_info(topic_text=topic, source="weibo_html")
+            for topic in topics
+        ]
+        topic_candidates = [item for item in topic_candidates if item][:topic_candidate_limit]
 
-        topics = topics[:topic_candidate_limit]
-
-        if topics:
-            topic = random.choice(topics)
-            logger.info(f"微博热搜接口获取成功，候选数量: {len(topics)}，选中话题: {topic}")
-            return topic
-
-        logger.warning("微博热搜接口返回为空，尝试页面抓取")
-    except Exception as e:
-        logger.warning(f"微博热搜接口获取失败: {e}，尝试页面抓取")
-
-    try:
-        response = requests.get(
-            "https://s.weibo.com/top/summary?cate=entrank",
-            headers=WEIBO_HEADERS,
-            timeout=10
-        )
-        response.raise_for_status()
-        topics = extract_topics_from_weibo_html(response.text)
-        topics = topics[:topic_candidate_limit]
-
-        if not topics:
-            logger.warning("微博热搜页面解析为空")
+        if not topic_candidates:
+            logger.warning("微博社会事件页面解析为空")
             return None
 
-        topic = random.choice(topics)
-        logger.info(f"微博热搜页面抓取成功，候选数量: {len(topics)}，选中话题: {topic}")
-        return topic
+        topic_info = random.choice(topic_candidates)
+        logger.info(
+            f"微博社会事件页面抓取成功，候选数量: {len(topic_candidates)}，选中话题: {topic_info['title']}"
+        )
+        return topic_info
     except Exception as e:
-        logger.warning(f"微博热搜页面抓取失败: {e}")
+        logger.warning(f"微博社会事件页面抓取失败: {e}")
         return None
 
 
-def generate_default_cover():
-    """生成默认封面 (复制自 generate_promo.py)"""
+def get_topic_from_weibo_hot_search():
+    """兼容旧调用，仅返回热点标题。"""
+    topic_info = get_hot_topic_from_weibo_hot_search()
+    if not topic_info:
+        return None
+    return topic_info["title"]
+
+
+def _get_cover_font(size):
+    font_candidates = [
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyh.ttf",
+        "C:/Windows/Fonts/simhei.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for font_path in font_candidates:
+        if not os.path.exists(font_path):
+            continue
+        try:
+            return ImageFont.truetype(font_path, size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _wrap_cover_text(text, line_length=12, max_lines=2):
+    text = (text or "").strip()
+    if not text:
+        return []
+    chunks = []
+    while text and len(chunks) < max_lines:
+        chunks.append(text[:line_length])
+        text = text[line_length:]
+    if text and chunks:
+        chunks[-1] = chunks[-1][:-1] + "…"
+    return chunks
+
+
+def _resize_image_to_cover(image, target_size=(900, 383)):
+    src_w, src_h = image.size
+    target_ratio = target_size[0] / target_size[1]
+    source_ratio = src_w / max(src_h, 1)
+
+    if source_ratio > target_ratio:
+        crop_w = int(src_h * target_ratio)
+        crop_x = max((src_w - crop_w) // 2, 0)
+        box = (crop_x, 0, crop_x + crop_w, src_h)
+    else:
+        crop_h = int(src_w / target_ratio)
+        crop_y = max((src_h - crop_h) // 3, 0)
+        box = (0, crop_y, src_w, min(crop_y + crop_h, src_h))
+
+    return image.crop(box).resize(target_size, Image.Resampling.LANCZOS)
+
+
+def list_cover_pool_images(cover_pool_dir):
+    cover_pool_dir = (cover_pool_dir or "").strip()
+    if not cover_pool_dir or not os.path.isdir(cover_pool_dir):
+        return []
+
+    supported_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
+    images = []
+    for path in sorted(Path(cover_pool_dir).iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in supported_suffixes:
+            continue
+        images.append(str(path))
+    return images
+
+
+def choose_cover_pool_image(images, random_module=None):
+    random_module = random_module or random
+    if not images:
+        return None
+    return random_module.choice(images)
+
+
+def render_cover_from_pool_asset(base_image_path, title):
+    try:
+        image = Image.open(base_image_path).convert("RGB")
+        image = _resize_image_to_cover(image, target_size=(900, 383))
+        draw = ImageDraw.Draw(image)
+        overlay_top = 226
+        draw.rectangle((0, overlay_top, 900, 383), fill=(10, 18, 28))
+        draw.rounded_rectangle((28, 26, 872, 355), radius=24, outline=(255, 255, 255), width=2)
+
+        title_lines = _wrap_cover_text(title, line_length=14, max_lines=2)
+        title_font = _get_cover_font(36)
+        text_y = 246
+        for line in title_lines:
+            bbox = draw.textbbox((0, 0), line, font=title_font)
+            text_width = bbox[2] - bbox[0]
+            draw.text(
+                ((900 - text_width) / 2, text_y),
+                line,
+                fill=(255, 255, 255),
+                font=title_font,
+            )
+            text_y += (bbox[3] - bbox[1]) + 10
+
+        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        filepath = os.path.join(temp_dir, f"pool_cover_{int(time.time())}.jpg")
+        image.save(filepath, quality=92)
+        return filepath
+    except Exception as e:
+        logger.error(f"素材池封面生成失败: {e}")
+        return None
+
+
+def resolve_cover_path_from_pool(cover_pool_dir, title, random_module=None):
+    images = list_cover_pool_images(cover_pool_dir)
+    chosen_image = choose_cover_pool_image(images, random_module=random_module)
+    if not chosen_image:
+        return None
+    return render_cover_from_pool_asset(chosen_image, title=title)
+
+
+def generate_default_cover(title_hint=None):
+    """生成兜底封面图。"""
     try:
         temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
         os.makedirs(temp_dir, exist_ok=True)
         width, height = 900, 383
-        color = (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200))
-        img = Image.new('RGB', (width, height), color=color)
+        base_color = (
+            random.randint(30, 90),
+            random.randint(90, 160),
+            random.randint(140, 220),
+        )
+        img = Image.new("RGB", (width, height), color=base_color)
+        draw = ImageDraw.Draw(img)
+
+        for y in range(height):
+            ratio = y / max(height - 1, 1)
+            color = (
+                min(255, int(base_color[0] + 90 * ratio)),
+                min(255, int(base_color[1] + 50 * ratio)),
+                min(255, int(base_color[2] - 40 * ratio)),
+            )
+            draw.line((0, y, width, y), fill=color)
+
+        draw.rounded_rectangle(
+            (36, 32, width - 36, height - 32),
+            radius=28,
+            outline=(255, 255, 255, 80),
+            width=3,
+        )
+        draw.rectangle((0, height - 110, width, height), fill=(12, 22, 34))
+
+        title_lines = _wrap_cover_text(title_hint or "今日热点速览")
+        if title_lines:
+            title_font = _get_cover_font(44)
+            line_gap = 14
+            text_y = 78
+            for line in title_lines:
+                bbox = draw.textbbox((0, 0), line, font=title_font)
+                text_width = bbox[2] - bbox[0]
+                draw.text(
+                    ((width - text_width) / 2, text_y),
+                    line,
+                    fill=(255, 255, 255),
+                    font=title_font,
+                )
+                text_y += (bbox[3] - bbox[1]) + line_gap
+
+        tag_font = _get_cover_font(22)
+        draw.text((52, height - 78), "WECHAT AUTO PUBLISHER", fill=(255, 255, 255), font=tag_font)
+        draw.text((52, height - 48), datetime.now().strftime("%Y-%m-%d"), fill=(184, 206, 223), font=tag_font)
+
         filename = f"sched_cover_{int(time.time())}.jpg"
         filepath = os.path.join(temp_dir, filename)
-        img.save(filepath)
+        img.save(filepath, quality=92)
         return filepath
     except Exception as e:
         logger.error(f"封面生成失败: {e}")
         return None
+
+
+def download_cover_image(image_url, title_hint=None):
+    """下载热点封面图并裁剪到微信封面比例。"""
+    image_url = _normalize_cover_image_url(image_url)
+    if not image_url:
+        return None
+
+    try:
+        response = requests.get(
+            image_url,
+            headers={"User-Agent": WEIBO_HEADERS["User-Agent"]},
+            timeout=15,
+        )
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content)).convert("RGB")
+        image = _resize_image_to_cover(image, target_size=(900, 383))
+        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        filename = f"topic_cover_{int(time.time())}.jpg"
+        filepath = os.path.join(temp_dir, filename)
+        image.save(filepath, quality=92)
+        logger.info(f"热点封面下载成功: {title_hint or image_url}")
+        return filepath
+    except Exception as e:
+        logger.warning(f"热点封面下载失败: {e}")
+        return None
+
+
+def resolve_cover_path(topic_info=None, title_hint=None):
+    topic_info = topic_info or {}
+    cover_url = _normalize_cover_image_url(topic_info.get("cover_image_url"))
+    topic_title = (topic_info.get("title") or "").strip()
+
+    if cover_url:
+        cover_path = download_cover_image(cover_url, title_hint=topic_title or title_hint)
+        if cover_path:
+            return cover_path
+        logger.info("热点封面不可用，回退本地封面")
+
+    return generate_default_cover(title_hint or topic_title)
 
 
 def compute_precheck_time(publish_time, hours_before):
@@ -484,14 +796,21 @@ def publish_latest_draft_job(
 def job():
     """定时执行的任务"""
     config = Config()
-    topic = get_topic_from_weibo_hot_search()
-    if not topic:
-        topic = random.choice(RANDOM_TOPICS)
-        logger.info(f"微博热搜不可用，回退到预设主题: {topic}")
+    publish_config = getattr(config, "PUBLISH_CONFIG", {}) or {}
+    topic_info = get_hot_topic_from_weibo_hot_search()
+    if not topic_info:
+        topic_info = _build_topic_info(
+            topic_text=random.choice(RANDOM_TOPICS),
+            source="fallback_random",
+        )
+        logger.info(f"微博社会事件不可用，回退到预设主题: {topic_info['title']}")
 
-    logger.info(f"⏰ 开始执行定时任务，本次主题: {topic}")
+    topic = topic_info["title"]
+
+    logger.info(f"开始执行定时任务，本次主题: {topic}")
 
     notifier = BarkNotifier()
+    cover_path = None
 
     try:
         # 1. 生成文案
@@ -503,18 +822,33 @@ def job():
             notifier.send(title="定时任务失败", content="文案生成失败，请检查日志")
             return False
 
-        logger.info(f"文案生成成功: {result.get('title')}")
+        final_title = result.get("title")
+        if publish_config.get("discussion_title_enabled"):
+            final_title = build_discussion_title(topic)
+
+        logger.info(f"文案生成成功: {final_title}")
 
         # 2. 准备发布
         publisher = WeChatPublisher()
-        cover_path = generate_default_cover()
+        cover_pool_dir = (publish_config.get("discussion_cover_pool_dir") or "").strip()
+        if cover_pool_dir:
+            cover_path = resolve_cover_path_from_pool(
+                cover_pool_dir,
+                title=final_title or topic,
+            )
+        else:
+            cover_path = resolve_cover_path(
+                topic_info=topic_info,
+                title_hint=final_title or topic,
+            )
 
         if not cover_path:
             logger.error("封面生成失败")
+            notifier.send(title="定时任务失败", content="封面生成失败，请检查素材池或日志")
             return False
 
         # 3. 格式化
-        article_template = (config.PUBLISH_CONFIG.get("article_template") or "").strip()
+        article_template = (publish_config.get("article_template") or "").strip()
         content = result.get("content", "")
         if article_template:
             content_for_publish = content
@@ -523,7 +857,7 @@ def job():
 
         formatted_article = publisher.format_for_wechat(
             content=content_for_publish,
-            title=result.get('title'),
+            title=final_title,
             author="Ran先生",
             summary=result.get('digest'),
             cover_image=cover_path,
@@ -535,23 +869,26 @@ def job():
 
         success = bool(publish_result)
         if success:
-            msg = f"✅ 定时发布成功! Media ID: {publish_result.get('media_id')}"
+            msg = f"定时发布成功! Media ID: {publish_result.get('media_id')}"
             logger.info(msg)
-            notifier.send(title="定时发布成功", content=f"主题: {topic}\n标题: {result.get('title')}")
+            notifier.send(title="定时发布成功", content=f"主题: {topic}\n标题: {final_title}")
         else:
-            msg = "❌ 定时发布失败"
+            msg = "定时发布失败"
             logger.error(msg)
             notifier.send(title="定时发布失败", content=f"主题: {topic}\n请检查日志")
 
-        # 清理
-        if os.path.exists(cover_path):
-            os.remove(cover_path)
         return success
 
     except Exception as e:
         logger.error(f"定时任务执行异常: {e}")
         notifier.send(title="定时任务异常", content=f"错误: {str(e)}")
         return False
+    finally:
+        if cover_path and os.path.exists(cover_path):
+            try:
+                os.remove(cover_path)
+            except OSError as cleanup_error:
+                logger.warning(f"清理封面文件失败: {cleanup_error}")
 
 
 def _notify_login_required(config, notifier, web_publisher, page, uploader=None):
@@ -780,16 +1117,16 @@ def main(argv=None):
     if schedule_info.get("schedule_mode") == "random_daily":
         target_times = schedule_info.get("target_times", [])
         logger.info(
-            f"🚀 发帖机器人已启动！今天随机计划执行 {len(target_times)} 次: "
+            f"发帖机器人已启动！今天随机计划执行 {len(target_times)} 次: "
             f"{', '.join(target_times) or '今天无剩余时段'}"
         )
         if schedule_info["web_publish_enabled"]:
-            logger.info("🌐 微信 UI 发布已启用，随机模式下每次任务生成草稿后会立即尝试自动发布。")
+            logger.info("微信 UI 发布已启用，随机模式下每次任务生成草稿后会立即尝试自动发布。")
     else:
-        logger.info(f"🚀 发帖机器人已启动！将在每天 {target_time} 自动生成并保存草稿。")
+        logger.info(f"发帖机器人已启动！将在每天 {target_time} 自动生成并保存草稿。")
     if schedule_info["web_publish_enabled"] and schedule_info.get("schedule_mode") != "random_daily":
         logger.info(
-            f"🌐 微信 UI 发布已启用，登录预检查时间: {schedule_info['precheck_time']}，"
+            f"微信 UI 发布已启用，登录预检查时间: {schedule_info['precheck_time']}，"
             f"发布时间: {schedule_info['publish_time']}"
         )
     logger.info("正在等待时间到达... (按 Ctrl+C 退出)")

@@ -22,28 +22,29 @@ class PromoGenerator:
         logger.info(f"开始生成推广文案，输入: {input_text[:50]}...")
         
         prompt = f"""
-        你是一位拥有10年经验的资深短视频和公众号运营专家，擅长跨平台内容重构与爆款公式设计。
-        
-        任务：请分析以下输入内容，结合中国用户心理、利用悬念前置、感官刺激、认知冲突等钩子，设计爆款中文标题、热门中文标签和一段情感小文章。
-        
-        输入内容：
+        你是一位擅长公众号争议话题写作的中文内容策划，熟悉男女关系、家庭关系、情感冲突类选题。
+
+        任务：围绕下面的输入主题，输出一篇能激发评论区讨论的公众号文案。整体方向要有观点冲突感，但不能低俗、不能违法违规。
+
+        输入主题：
         {input_text}
-        
-        要求：
-        要求：
-        1. 关键词 (keyword)：从输入内容中提炼核心名词，2-5个字（例如：深夜加班）。
-        2. 副标题 (subtitle)：6-8个字，总结文章情感或核心主旨，唯美、感性（例如：再见，不是终点）。
-        3. 摘要 (digest)：80-100字，作为微信公众号的封面摘要，要吸引人点击，语句通顺完整。
-        4. 标签 (tags)：8个以上，紧扣主题，包含热门话题标签，每个标签前加"#"，用空格分隔。
-        5. 内容 (content)：约150字，语气感性、温暖，能够触动人心，引发读者共鸣。
-        
+
+        标题要求：
+        1. 标题必须使用这个句式：发现中国有一个奇怪的现象：xxx
+        2. xxx 必须直接围绕输入主题展开，不要改成诗意抒情标题
+        3. 不要出现旧账号模板词，不要使用固定栏目包装语
+
+        内容要求：
+        1. 摘要 (digest)：80-100字，强调现象、冲突、讨论点，适合做封面摘要
+        2. 标签 (tags)：8个以上，聚焦两性、婚姻、家庭、情感讨论，每个标签前加"#"，用空格分隔
+        3. 内容 (content)：约350字，语气偏观点讨论、现实观察、引发站队和共鸣，不要写成治愈散文
+
         请严格按照以下 JSON 格式输出：
         {{
-            "keyword": "核心名词",
-            "subtitle": "6-8个字的唯美短句",
+            "title": "发现中国有一个奇怪的现象：xxx",
             "digest": "这里是微信封面摘要...",
             "tags": "#标签1 #标签2 #标签3...",
-            "content": "这里是情感小文章内容..."
+            "content": "这里是观点型短文内容..."
         }}
         """
         
@@ -57,22 +58,18 @@ class PromoGenerator:
             # 尝试解析 JSON
             try:
                 result = json.loads(cleaned_text)
-                
-                # 组合特定格式的标题: 远方岛屿 {keyword} | {subtitle}
-                keyword = result.get("keyword", input_text[:5]) # 降级处理
-                subtitle = result.get("subtitle", "未生成标题")
-                result["title"] = f"远方夜听 {keyword} | {subtitle}"
-                
+
+                result["title"] = (result.get("title") or input_text).strip()
                 # 确保有摘要，如果没有则使用内容截断（后备方案）
                 if not result.get("digest"):
                     result["digest"] = result.get("content", "")[:100]
-                
+
                 return result
             except json.JSONDecodeError:
                 logger.warning("JSON解析失败，尝试简单提取或返回原始文本")
                 # 如果解析失败，尝试手动构造结构（这里简单返回）
                 return {
-                    "title": f"远方夜听 {input_text[:5]} | 自动生成失败",
+                    "title": input_text.strip(),
                     "digest": response_text[:100],
                     "tags": "",
                     "content": response_text
